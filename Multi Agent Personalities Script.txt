@@ -1,0 +1,178 @@
+# Deep-Dive — Idea 4: Multi-Agent Personalities (AI-class lens)
+
+*Worked example. Use as reference for how a proposal can be developed. 1–5 students.*
+
+---
+
+## 1. One-sentence pitch
+
+*Extract personalities from real-person text corpora, instantiate them as LLM agents, let them interact under controlled conditions, and measure whether individual fidelity and group-level dynamics hold up — the subject of study is the AI, not the data.*
+
+---
+
+## 2. Why this is an AI-class project
+
+The agent is the subject. We're not mining data *about* people; we're asking whether LLMs, conditioned on text traces, faithfully simulate individuals and their group dynamics. Four testable claims:
+
+1. **Individual fidelity.** A persona-seeded agent reproduces its seed person's identifiable style.
+2. **Behavioral fidelity.** The agent makes *choices* the real person would (beyond surface style).
+3. **Group fidelity.** A set of such agents, placed in a group chat, produces group dynamics (who dominates, who converges, who disagrees) that resemble the real group.
+4. **Perturbation behavior.** Injected external events shift agent reactions in directions that track the real people's reactions to real events.
+
+The project succeeds even if the headline claim *fails* — a clean rejection with a good experiment is publishable.
+
+---
+
+## 3. Headline hypothesis
+
+> "Persona-seeded LLM agents can be identified with their seed persona at above-chance accuracy by blind third-party raters, after controlling for superficial style cues."
+
+Pre-commit to:
+- Seed personas: N = 8 public figures with substantial public text corpora (option A: transcripts of podcast guests; option B: politician speeches; option C: columnist bylines).
+- Third-party raters: N ≥ 20. Pre-screen for familiarity.
+- Chance rate: 1/8 = 12.5%. Target effect: ≥ 30% accuracy (≈ Cohen's h = 0.42 — medium effect).
+
+Optional secondary hypotheses (ambitious teams may add any of these — graded as bonus rigor):
+
+- **H2:** Group-level interaction metrics (turn-share Gini, sentiment-divergence across pairs) of persona-seeded agent groups correlate with the same metrics from real group conversations (public panel discussions, podcast roundtables) above a pre-specified threshold.
+- **H3:** Injecting a counterfactual event into a persona-seeded group chat shifts responses in a direction pre-predictable from the seed person's known positions, with F1 ≥ 0.6.
+
+---
+
+## 4. Minimum Viable Build (MVB)
+
+End-to-end in 5 files:
+
+- `extract_persona.py` — one method (default: few-shot prompt that asks the LLM to extract a 10-dimension style profile + 5 exemplar messages per person). Accepts a text corpus, outputs a persona JSON.
+- `agent_runtime.py` — wraps a single LLM call with a persona JSON and a conversation history. Exposes a `reply(history) → message` interface.
+- `simulate_chat.py` — takes N persona JSONs, a topic seed, and a step count; outputs a transcript.
+- `blind_eval.py` — takes transcripts + seed personas, presents raters with anonymized snippets, collects guesses.
+- `analyze.py` — confidence intervals on accuracy, breakdown by persona, per-rater variance, pre-specified analysis only.
+
+Avoid scope creep: fixed model (one, e.g., `claude-sonnet-4-6`), one persona-extraction method, one topic seed per run, fixed N of turns.
+
+---
+
+## 5. Build-heavy extensions (optional)
+
+- Multiple persona-extraction methods (few-shot / embedding-based / fine-tuned) — enables **method-comparison** experiments.
+- Web UI for rater study — enables larger N of raters.
+- Automated event-injection scheduler — enables **H3** at scale.
+- Social-graph extractor from transcripts — opens cross-over with KM-class project.
+
+Each extension unlocks additional experiments; don't build them unless they're tied to a specific pre-committed secondary hypothesis.
+
+---
+
+## 6. Data
+
+**Default: public figures with large public corpora.** Three candidates, ranked by ease:
+
+1. **Podcast guests / columnists.** Transcripts from long-running interview podcasts (Lex Fridman, The Ezra Klein Show, Tyler Cowen's Conversations with Tyler) or columnists with 200+ published pieces. Pro: consistent personas, easy to collect, no consent issue. Con: somewhat curated personas.
+2. **Politicians.** Debate + speech transcripts from a handful of distinguishable figures. Pro: well-known, rich group-dynamic data (debates, panels). Con: potential for low-quality stereotype reproduction.
+3. **Fictional characters.** Corpus from TV transcripts (e.g., all Seinfeld / Parks and Rec dialogue). Pro: controlled, fun, built-in group-chat ground truth. Con: style ≠ real individual psychology; arguably easier task.
+
+**Flag:** real personal data (WhatsApp chats with friends) is possible but requires explicit consent from every person whose messages are used AND an ethics review with Fabio. Default to public data.
+
+**Size target:** per persona, 10k–50k tokens of source text. Enough for few-shot prompting; not so much that context windows break.
+
+---
+
+## 7. Experimental design
+
+### 7.1 Design
+
+Single-factor within-subjects design on the rater side:
+- **Factor: Persona** (8 levels, one per seed person)
+- **Outcome:** rater-assigned persona label from a multiple-choice of all 8
+- **Trials per rater:** 24 (3 passages per persona, randomized order)
+
+### 7.2 Sample size / power
+
+- Raters: N = 20 (upper-bound feasible in a 4–6 week project).
+- Power calc (back-of-envelope): to detect a 30% accuracy against 12.5% chance at α = 0.05, two-sided binomial test, we need ~15 raters × 24 trials each (≈ 480 trials total). 20 raters gives headroom.
+- Per-persona sub-analyses will be underpowered — report but don't over-interpret.
+
+### 7.3 Controls
+
+- **Style-scrubbed control:** same persona, but passages passed through a style-neutralization prompt first. If raters can still identify the persona → they're using content, not style. If they can't → style cues were carrying the signal.
+- **Wrong-persona control:** LLM asked to write "as" the wrong persona (random). Accuracy here should be ≤ chance; if not, raters are picking up extraneous cues (e.g., the LLM's defaults).
+
+### 7.4 Pre-registered analysis
+
+- Primary: one-sample exact binomial test, accuracy vs chance (0.125), 95% CI via Wilson interval.
+- Secondary (H2): Spearman correlation between agent-group and real-group on 3 pre-specified interaction metrics. Report with 95% bootstrap CI.
+- Multiple comparisons: if all 3 hypotheses tested, apply Holm–Bonferroni on family α = 0.05.
+
+### 7.5 What this rules out
+
+- We are not claiming the agent "is" the person. Only that it is identifiable above chance.
+- We are not claiming consciousness, feeling, or authenticity.
+- Failure to identify above chance → genuine null, interesting in itself.
+
+---
+
+## 8. Team roles (3 students)
+
+| Role | Owns | Deliverable |
+|------|------|-------------|
+| **Persona & extraction** | `extract_persona.py`, persona JSONs, method justification, related-work survey on persona modeling | Methods section of writeup + extraction code |
+| **Simulation & runtime** | `agent_runtime.py`, `simulate_chat.py`, prompt engineering, reproducibility (seed control, logging) | System section of writeup + runtime code |
+| **Evaluation & statistics** | `blind_eval.py`, `analyze.py`, rater recruitment, pre-registered analysis plan, stats | Evaluation + results sections of writeup |
+
+Solo-team version: own all three roles, cut to N = 4 personas and N = 10 raters, drop H2/H3.
+
+Pair version: one person owns extraction + runtime, the other owns evaluation + stats.
+
+---
+
+## 9. Timeline (6 weeks)
+
+| Week | Milestone |
+|------|-----------|
+| 1 | Pick corpus; collect text for 8 personas; decide raters pool; pre-register hypotheses. |
+| 2 | MVB runs end-to-end on 2 personas, 1 rater (dry run). |
+| 3 | Full 8-persona simulation; pilot rater study with 3 raters — fix UX issues. |
+| 4 | Main rater study N = 20; data collection done. |
+| 5 | Analysis + secondary hypotheses if time. Writeup draft. |
+| 6 | Revisions, final report, presentation. |
+
+---
+
+## 10. Failure modes & mitigations
+
+1. **"All LLM personas sound the same" (default voice leakage).** Mitigation: style-scrubbed control reveals this. Report it openly if it happens — it's an interesting finding.
+2. **Raters can't identify because they don't know the seed people well.** Mitigation: pre-screen raters for familiarity with the 8 candidates. Restrict raters who fail a familiarity check.
+3. **Overfitting to exemplar messages.** Mitigation: during evaluation, sample agent utterances on *new* topics the seed persona never discussed in the training corpus.
+4. **Ethics / reputation risk if using real politicians.** Mitigation: prefer podcast guests or columnists; clearly label the study as a simulation study; don't publish agent transcripts that could be misattributed.
+5. **Time blowup on the rater study.** Mitigation: build a simple Google-Forms-based evaluation first; only move to custom UI if time allows.
+
+---
+
+## 11. What grade outcomes look like
+
+- **A-range:** Headline hypothesis properly tested with CI; controls included; pre-registration honored; thoughtful interpretation including null-result handling.
+- **B-range:** Working pipeline + headline result, but weaker controls or post-hoc analysis not flagged as such.
+- **C-range:** Pipeline works; experiment runs; but sample size inadequate or no uncertainty reporting.
+- **Below:** Pipeline doesn't produce valid data, or no experiment actually executed.
+
+Note: a *well-executed null result* earns A-range, because that's real science. A "positive" result with bad methodology does not.
+
+---
+
+## 12. Connection to course material
+
+- **Session 3 (Evaluation & Inference):** inter-rater reliability, binomial inference.
+- **Session 4 (Experimentation):** CIs, within-subject design, control conditions, pre-registration.
+- **Session 5 (Optimizing):** multiple-comparison correction, power analysis, avoiding winner's curse on secondary analyses.
+- **Session 7 (LLM):** LLM embeddings, persona modeling, prompt engineering.
+- **Session 11 (Combining):** evaluating without ground truth (we have none for "is this really persona X?" — we substitute with rater-identifiability as an observable proxy).
+
+---
+
+## 13. Open questions for the team
+
+- Which corpus? Lock this in week 1.
+- Which LLM (cost × consistency × rate-limits trade-off)?
+- IRB / ethics: if using rater-humans, does this need approval? (Probably not for N = 20 low-stakes classification, but check.)
+- Budget for LLM API calls — back-of-envelope: 8 personas × 24 passages × 2 conditions × ~500 tokens output ≈ 200k output tokens total. Manageable on any plan.
