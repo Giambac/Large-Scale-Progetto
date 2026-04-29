@@ -1,0 +1,82 @@
+# Project — Conversational Clustering
+
+*Short brief. Follows the universal scaffolding and deliverables; this doc only describes the project itself.*
+
+---
+
+## Idea in one sentence
+
+An AI system that clusters a dataset by *conversing* with a human — proposing a grouping, explaining it, and refining it through dialogue — where the human (the **oracle**) is the sole judge of quality and no intrinsic ground truth exists.
+
+## Why it's interesting
+
+Clustering is one of the least well-defined tasks in data analysis. Three people will produce three defensible groupings of the same data, and people typically don't know what grouping they want until they see one. This is not a bug to engineer around — the oracle *is* the objective function. The interesting questions sit at the interaction loop: can the system efficiently converge to a clustering the oracle accepts, under a tight cognitive-load budget, while handling preferences that emerge and contradict each other mid-conversation?
+
+## Baseline capabilities (the MVB)
+
+A minimum viable build supports an end-to-end conversation over a fixed text dataset:
+
+- Ingest a tabular or text dataset; produce an initial clustering with cluster names and short natural-language descriptions.
+- Accept oracle input at multiple levels — **global** ("too many clusters", "focus on billing complaints"), **cluster-level** ("split this", "merge A and B", "A is too large"), **point-level** ("x belongs in B", "x and y should be together"), and **instructional** ("treat 'error' and 'fail' as synonyms", "pay more attention to feature F").
+- Produce **soft assignments** (each point gets a distribution over K clusters) and a **hierarchy** that the oracle can drill into or zoom out of.
+- Decide what to *show* and what to *ask* next — the system picks between showing a full clustering, a subset, representative examples, a boundary point, or a targeted question.
+- Maintain coherent state across turns; remember earlier feedback even when later feedback partially contradicts it (latest intent wins, by definition).
+- A sensible stopping signal — oracle satisfaction, diminishing returns, or a turn budget.
+
+A clean way to structure the system is a small set of functions over the current state: `f_output` (best-guess clustering), `f_uncertainty` (what we know vs. don't), `f_next_best_step` (show, ask, or stop), `f_next_state` (update state from an oracle reply), `f_eval` (self-assessment). Each can start as a naïve LLM prompt and be sharpened where it hurts most.
+
+## Design questions worth thinking about
+
+- What does the system cluster over — raw features, embeddings, a learned representation? Does the oracle's feedback influence the representation itself, or only the grouping on top?
+- What does the system *ask* the oracle, and when? Every turn has a cognitive-load cost; the most informative next interaction is usually a targeted question (boundary point, ambiguous merge), not a full redisplay.
+- How do you reconcile contradictory feedback — "merge A and B" three turns ago vs. "A and B are too different" now? Treat it as preference evolution, not error: latest intent wins, but surface the shift.
+- Cluster names and descriptions: where do they come from, and how are they kept consistent across iterations without thrashing?
+- Hierarchy: built top-down in one shot, or grown incrementally as the oracle drills in?
+- **Generalization**: once the oracle is happy, can the system produce a function (prompt, classifier, rule set) that assigns *new* items consistently? Preferences that are subjective and emergent are hard to codify — how do you test the function without making the oracle label more data?
+
+## Data
+
+Text datasets work naturally: support tickets, product reviews, news articles, social-media posts, code snippets, log messages. Aim for something where 3–10 top-level clusters feels plausible and a non-trivial conversation is imaginable. Candidate starting points: IMDB movies, Amazon Reviews 2023, or any small internal text dump. Document the dataset in the repo and keep a frozen held-out subset for the generalization question.
+
+## Evaluation
+
+There is no intrinsic ground truth — that is the shape of the problem. Combine process and outcome signals.
+
+- **Oracle satisfaction** — explicit acceptance, or behavioral (feedback magnitude drops to minor tweaks).
+- **Turns to convergence** — primary efficiency measure. Not all turns are equal; weight by feedback type.
+- **Cognitive load per turn** — items/clusters shown, length of text, question complexity. Measure and minimize.
+- **Contradiction / preference-drift tracking** — how often, how severe; does the system detect drift and clarify?
+- **Pairwise validation** — "are x and y correctly grouped?" on sampled pairs, as a behavioral probe.
+- **Soft-assignment calibration** — when the system flags a point as a boundary case, is it actually ambiguous?
+- **Generalization performance** — accuracy on held-out items via the codified mapping function, validated by the oracle on a small sample.
+- **Internal-validity sanity checks** — silhouette / intra- vs. inter-cluster distance tracked across turns, as a secondary diagnostic (not the objective).
+
+For evaluation at scale, use **LLM-as-oracle simulations**: small LLMs given a preference specification, a persona, and a cognitive-load constraint, optionally with hidden ground truth. Validate simulated-oracle behavior against a small human study (N ≈ 5–10, within-subject). Headline claims should come with CIs, not means alone.
+
+## Suggested research questions
+
+Pick one or two as the headline; the rest are bonus.
+
+- Does conversational refinement converge toward oracle-accepted clusterings, and how fast (turns, cognitive load)?
+- Which interaction type at each turn maximizes information gain per unit of cognitive load — a question, a full display, a targeted pairwise check?
+- How sensitive is the result to phrasing — does the same intent, expressed three ways, yield three different clusterings?
+- How should the system handle preference drift? Always prefer latest intent, or surface and ask?
+- Can oracle-specific preferences be codified into a reusable mapping function for new items, and under what conditions does that generalization hold?
+- Do LLM-simulated oracles converge in patterns comparable to human oracles, or systematically differ?
+
+## Scope tiers
+
+- **Solo / pair (build-light, study-deep):** CLI or notebook, single dataset, one representation (e.g. sentence embeddings), LLM orchestrates the `f_*` functions through structured JSON. Headline experiment: ablation across 3–5 interaction strategies (random vs. uncertainty-driven vs. boundary-driven question selection) against LLM-simulated oracles, plus a small human-rated subset.
+- **Trio / quartet (build-heavier):** web UI, multiple backends (k-means / HDBSCAN / LLM-first), UMAP/t-SNE visualization, dataset upload, persistent sessions, hierarchy navigation. Headline experiment: **N oracles × M tasks** with both LLM oracles (scale) and human oracles (N ≥ 10 within-subject), comparing the conversational interface to a sensible default-parameter baseline on oracle satisfaction, turns, and generalization accuracy.
+
+## Risks to plan for
+
+- The conversational wrapper becomes superficial — make sure evaluation measures something the dialogue actually influences, not just what the underlying clustering does by default.
+- Cognitive load ignored at design time and "discovered" at study time. Budget it from turn one.
+- Soft assignments that look principled but aren't calibrated — test them.
+- LLM-simulated oracles that behave too consistently or too helpfully. Validate against humans before trusting any quantitative claim.
+- "User study" with three friends and no protocol. Design the study (within-subject, randomized order, scripted prompts, consented recording) before recruiting.
+
+## What "done" looks like
+
+A runnable system someone else can try on their own text dataset; a transcript and trace of at least one full conversation per evaluated condition; one defensible quantified claim about the loop's behavior (convergence rate, or cognitive-load–information-gain tradeoff, or generalization accuracy) with a confidence interval; honest discussion of what the oracle signal can and cannot tell you.
