@@ -1,0 +1,87 @@
+# Conversational Clustering
+
+## What This Is
+
+An AI research system that clusters a text dataset by conversing with a human oracle — proposing groupings, explaining them, and refining them through dialogue. The oracle is the sole judge of quality, making this a study of how an AI can efficiently converge to a subjectively acceptable clustering under a tight cognitive-load budget, with no intrinsic ground truth.
+
+## Core Value
+
+The interaction loop converges toward oracle-accepted clusterings efficiently, with every design decision — what to show, what to ask, when to stop — measured against cognitive load and information gain.
+
+## Requirements
+
+### Validated
+
+(None yet — ship to validate)
+
+### Active
+
+- [ ] Ingest text dataset and produce an initial clustering with cluster names and natural-language descriptions
+- [ ] Accept oracle feedback at four levels: global, cluster-level, point-level, and instructional
+- [ ] Produce soft assignments (per-point distribution over K clusters) and a navigable hierarchy
+- [ ] Implement `f_next_best_step`: decide each turn whether to show, ask, or stop
+- [ ] Maintain coherent state across turns; latest oracle intent wins on contradictions
+- [ ] Implement a stopping signal (oracle satisfaction, diminishing returns, or turn budget)
+- [ ] Run ablation experiments across 3–5 interaction strategies with LLM-simulated oracles
+- [ ] Validate LLM-simulated oracle behavior against a small human study (N ≈ 5–10)
+- [ ] Produce at least one defensible quantified claim with a confidence interval
+- [ ] Enable generalization: codify oracle preferences into a function for new items
+
+### Out of Scope
+
+- Web UI / dataset upload / persistent sessions — solo/pair scope is CLI or notebook
+- Multiple clustering backends (k-means / HDBSCAN / LLM-first) — start with one representation
+- UMAP/t-SNE visualization — deferred to trio/quartet scope tier
+- Full N×M human oracle study — requires larger team; solo scope uses LLM oracles + small human validation
+
+## Context
+
+This is an academic AI systems project (Large-Scale semester 2). The system models clustering as a human-in-the-loop optimization problem where the oracle *is* the objective function. The core research insight is that clustering is fundamentally under-defined without a human preference signal, and the interesting engineering question is how to extract that signal efficiently.
+
+**Architecture:** A small set of state functions — `f_output`, `f_uncertainty`, `f_next_best_step`, `f_next_state`, `f_eval` — each starting as a naïve LLM prompt and sharpened where bottlenecks emerge.
+
+**Dataset:** Text datasets (support tickets, product reviews, news articles). Target: 3–10 top-level clusters, non-trivial conversation possible. Candidates: IMDB movies, Amazon Reviews 2023, or small internal text dump. Keep a frozen held-out subset for generalization evaluation.
+
+**Evaluation approach (no ground truth):** Combine oracle satisfaction, turns to convergence, cognitive load per turn, contradiction/drift tracking, pairwise validation, soft-assignment calibration, and generalization performance. LLM-simulated oracles for scale; human study (N ≈ 5–10) for validation.
+
+**Existing scripts in repo:**
+- `Conversational Clustering Script.txt` — prototype or reference script
+- `Multi Agent Personalities Script.txt` — multi-agent persona reference
+
+## Constraints
+
+- **Scope**: Solo/pair tier — CLI or notebook interface; single dataset; one embedding representation
+- **Research integrity**: All headline quantitative claims must include confidence intervals; human study requires consented, within-subject protocol
+- **Cognitive load**: Must be budgeted from turn one, not discovered at study time
+- **Evaluation validity**: Evaluation must measure something the dialogue actually influences, not just the underlying clustering's default behavior
+- **LLM oracle validation**: Simulated oracle results must be validated against humans before any quantitative claim is published
+
+## Key Decisions
+
+| Decision | Rationale | Outcome |
+|----------|-----------|---------|
+| Soft assignments over hard labels | Enables boundary detection and calibration testing | — Pending |
+| `f_*` function decomposition | Clean separation allows iterative sharpening of bottlenecks | — Pending |
+| LLM-simulated oracles for scale | Human oracles are expensive; LLMs enable large-scale ablations | — Pending |
+| Latest intent wins on contradictions | Treat preference evolution as signal, not error | — Pending |
+| Sentence embeddings as representation | Standard, well-understood; oracle feedback acts on grouping, not embeddings | — Pending |
+
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd-transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd-complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
+
+---
+*Last updated: 2026-04-29 after initialization*
