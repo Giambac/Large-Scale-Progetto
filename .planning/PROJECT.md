@@ -38,7 +38,12 @@ The interaction loop converges toward oracle-accepted clusterings efficiently, w
 
 This is an academic AI systems project (Large-Scale semester 2). The system models clustering as a human-in-the-loop optimization problem where the oracle *is* the objective function. The core research insight is that clustering is fundamentally under-defined without a human preference signal, and the interesting engineering question is how to extract that signal efficiently.
 
-**Architecture:** A small set of state functions — `f_output`, `f_uncertainty`, `f_next_best_step`, `f_next_state`, `f_eval` — each starting as a naïve LLM prompt and sharpened where bottlenecks emerge.
+**Architecture:** A multi-agent system with three core agents:
+- **Clustering Agent** — maintains state, proposes groupings, implements `f_output`, `f_uncertainty`, `f_next_best_step`, `f_next_state`
+- **Oracle Agent** — LLM-simulated human oracle with a preference specification, persona, and cognitive-load constraint; stand-in for real humans at scale
+- **Judge Agent** — evaluates convergence and quality; implements `f_eval`; produces the stopping signal and evaluation metrics
+
+A 4th agent for synthetic data generation is acknowledged but deferred. Each agent starts as a naïve LLM prompt and is sharpened where bottlenecks emerge.
 
 **Dataset:** Text datasets (support tickets, product reviews, news articles). Target: 3–10 top-level clusters, non-trivial conversation possible. Candidates: IMDB movies, Amazon Reviews 2023, or small internal text dump. Keep a frozen held-out subset for generalization evaluation.
 
@@ -65,6 +70,8 @@ This is an academic AI systems project (Large-Scale semester 2). The system mode
 | LLM-simulated oracles for scale | Human oracles are expensive; LLMs enable large-scale ablations | — Pending |
 | Latest intent wins on contradictions | Treat preference evolution as signal, not error | — Pending |
 | Sentence embeddings as representation | Standard, well-understood; oracle feedback acts on grouping, not embeddings | — Pending |
+| 3-agent architecture | Clustering agent + Oracle agent + Judge agent — clean separation of concerns; oracle agent simulates human for scale | — Pending |
+| Synthetic data agent deferred | Out of scope for v1; real or curated datasets used instead | — Pending |
 
 ## Evolution
 
