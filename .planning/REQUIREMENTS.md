@@ -65,7 +65,7 @@
 ### Evaluation Depth
 
 - **EVAL-V2-01**: Soft-assignment calibration — reliability diagram showing whether system-flagged boundary points are genuinely ambiguous
-- **EVAL-V2-02**: Human oracle validation study (N ≥ 5–10, within-subject, randomized order) to confirm LLM oracle simulation results generalize
+- **EVAL-V2-02**: Human oracle validation study (N >= 5-10, within-subject, randomized order) to confirm LLM oracle simulation results generalize
 
 ### Extended Clustering Backends
 
@@ -101,19 +101,19 @@
 | CLUS-02 | Phase 2 | Pending |
 | CLUS-03 | Phase 2 | Pending |
 | CLUS-04 | Phase 2 | Pending |
+| FB-01 | Phase 2 | Pending |
+| FB-02 | Phase 2 | Pending |
+| FB-03 | Phase 2 | Pending |
+| HIER-01 | Phase 2 | Pending |
+| HIER-02 | Phase 2 | Pending |
 | ORC-01 | Phase 3 | Pending |
 | ORC-02 | Phase 3 | Pending |
 | ORC-03 | Phase 3 | Pending |
 | ORC-04 | Phase 3 | Pending |
+| FB-04 | Phase 3 | Pending |
 | JUDG-01 | Phase 4 | Pending |
 | JUDG-02 | Phase 4 | Pending |
 | JUDG-03 | Phase 4 | Pending |
-| FB-01 | Phase 2 | Pending |
-| FB-02 | Phase 2 | Pending |
-| FB-03 | Phase 2 | Pending |
-| FB-04 | Phase 3 | Pending |
-| HIER-01 | Phase 2 | Pending |
-| HIER-02 | Phase 2 | Pending |
 | ALAB-01 | Phase 5 | Pending |
 | ALAB-02 | Phase 5 | Pending |
 | ALAB-03 | Phase 5 | Pending |
@@ -123,8 +123,8 @@
 **Coverage:**
 - v1 requirements: 28 total
 - Mapped to phases: 28
-- Unmapped: 0 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-29*
-*Last updated: 2026-04-29 after initial definition*
+*Last updated: 2026-04-29 — phase assignments confirmed by ROADMAP.md creation*
