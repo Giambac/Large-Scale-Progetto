@@ -28,6 +28,19 @@ Three core agents:
 - Held-out split locked before ANY experiment runs — never modify it
 - All headline quantitative claims must include bootstrap 95% CIs
 
+## Coding Philosophy — Fail Loudly
+
+**Let the code crash. Do not make it robust.**
+
+- No silent failures — if something is wrong, raise an exception or let it propagate
+- No defensive `if/else` chains to paper over unexpected state
+- No swallowed exceptions (`except: pass`, `except Exception as e: log and continue`)
+- Use `assert` statements freely to document and enforce invariants
+- Error handling is only permitted at two places: the CLI entry point and external API calls (LLM, embeddings)
+- Everywhere else: unexpected state = crash immediately with a clear traceback
+
+A crash during development is a feature. It tells you exactly what broke and where. Silent wrong answers are the actual failure mode to avoid.
+
 ## Planning Artifacts
 
 ```

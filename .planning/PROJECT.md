@@ -57,6 +57,7 @@ A 4th agent for synthetic data generation is acknowledged but deferred. Each age
 
 - **Scope**: Solo/pair tier — CLI or notebook interface; single dataset; one embedding representation
 - **Research integrity**: All headline quantitative claims must include confidence intervals; human study requires consented, within-subject protocol
+- **Fail loudly**: Code must crash on unexpected state — no silent failures, no defensive `if/else` chains, no swallowed exceptions. An assertion error or uncaught exception is always preferable to continuing with bad state. Error handling is only permitted at system boundaries (CLI entry point, API calls). Everywhere else: let it crash.
 - **Cognitive load**: Must be budgeted from turn one, not discovered at study time
 - **Evaluation validity**: Evaluation must measure something the dialogue actually influences, not just the underlying clustering's default behavior
 - **LLM oracle validation**: Simulated oracle results must be validated against humans before any quantitative claim is published
