@@ -1,0 +1,159 @@
+# 4-Week Plan — Multi-Agent Personalities
+
+**Team:** 3 people
+**Schedule:** 2 sessions/week — 1h sync (S1) + 3h build (S2). 16h together total. Assume ~6h async per person per week.
+**Total scope:** 4 weeks, ~48 person-hours sync + ~72 person-hours async.
+
+---
+
+## Scope decisions (locked before week 1)
+
+We are cutting from the original 6-week brief:
+
+- **6 personas** instead of 8 (still gives 1/6 = 16.7% chance baseline; target ≥35% accuracy).
+- **15 raters** instead of 20 (still powered for the primary test).
+- **Headline hypothesis only.** H2 (group dynamics) and H3 (counterfactual injection) are **out of scope**. Mention as future work.
+- **Google Forms** for the rater study. No custom UI.
+- **One LLM, one persona-extraction method, one topic seed.** No method comparison.
+- **Public-figure corpora only.** No personal data, no ethics approval needed.
+
+If we are ahead of schedule at end of week 3, we add the style-scrubbed control. Nothing else.
+
+---
+
+## Roles
+
+| Person | Owns | Files |
+|--------|------|-------|
+| **A — Persona** | Corpus collection, persona extraction, methods writeup | `extract_persona.py`, persona JSONs |
+| **B — Runtime** | Agent prompts, transcript generation, reproducibility | `agent_runtime.py`, `simulate_chat.py` |
+| **C — Eval** | Rater study, stats, pre-registration, results writeup | `blind_eval.py`, `analyze.py`, Google Form |
+
+Everyone reviews everyone's PRs. Writeup is split by section: A writes Methods, B writes System, C writes Evaluation + Results. Intro/Discussion is joint in week 4.
+
+---
+
+## Decisions to lock in week 1, session 1
+
+1. **Corpus.** Default: long-form podcast transcripts (Lex Fridman / Ezra Klein / Tyler Cowen). Pick 6 distinguishable guests, each with ≥10k tokens of transcript.
+2. **LLM.** Default: `claude-sonnet-4-6`. Estimate budget: ~200k output tokens total → cheap.
+3. **Topic seed for simulated chat.** Pick one neutral prompt (e.g., "discuss the future of remote work") all agents respond to.
+4. **Rater pool.** Where do 15 raters come from? Classmates + friends. Each rater needs to pass a familiarity check (recognize ≥4 of 6 personas).
+5. **Pre-registration doc.** Write before any data is collected (week 2).
+
+---
+
+## Week 1 — Setup & corpus
+
+**Goal:** corpus collected, persona JSONs for 2 personas, dry-run pipeline.
+
+### Session 1 (1h) — Kickoff
+- Lock the 6 decisions above.
+- Create repo, set up shared LLM API key, agree on Python version + `requirements.txt`.
+- Each person opens a draft of their file with a `TODO` skeleton.
+
+### Session 2 (3h) — Build skeleton end-to-end
+- A: scrape/download 2 podcast transcripts, build the few-shot extraction prompt, output 2 persona JSONs.
+- B: write `agent_runtime.reply(history)` against one persona. Generate a 10-turn dummy transcript.
+- C: build the Google Form template (multiple choice, 6 options) and a pre-registration doc skeleton.
+- Integration: run A → B end-to-end on 2 personas. Commit the result.
+
+### Async week 1 (per person, ~6h)
+- A: collect remaining 4 corpora, run extraction.
+- B: prompt-engineer the runtime so agents stay in persona for 5+ turns. Add seed control + JSONL logging.
+- C: finalize pre-registration doc (hypothesis, sample size, analysis plan, controls). Send draft to A and B.
+
+**End-of-week deliverable:** 6 persona JSONs committed; one full transcript per persona; pre-registration doc finalized and timestamped.
+
+---
+
+## Week 2 — Full pipeline & evaluation prep
+
+**Goal:** generate all evaluation passages; pilot rater study with 3 raters.
+
+### Session 1 (1h) — Pre-registration freeze
+- Read pre-registration aloud. Anyone who wants to change it must speak now. After this session: locked.
+- Decide passage length (recommend 80–150 words per snippet).
+- Decide trial structure: each rater sees 18 passages = 3 per persona, randomized.
+
+### Session 2 (3h) — Generate evaluation passages
+- B: run `simulate_chat.py` to produce 3 passages per persona × 6 personas = 18 passages. Each passage is the agent's reply to a *new* topic the seed person never discussed in their corpus (avoid memorization).
+- C: load passages into Google Form. Test the form yourself (it should take a rater ~15 min).
+- A: spot-check passages. Flag any that obviously leaked exemplar text from the persona JSON.
+- Integration: do a fake rater run as a team. Record how long it takes.
+
+### Async week 2 (per person, ~6h)
+- B: regenerate any flagged passages; lock the final 18.
+- C: recruit 3 pilot raters, send them the form. Collect responses.
+- A: start methods section of writeup.
+
+**End-of-week deliverable:** 18 finalized passages; Google Form live; pilot data from 3 raters.
+
+---
+
+## Week 3 — Main study & analysis
+
+**Goal:** 15 raters complete the form; primary analysis run.
+
+### Session 1 (1h) — Pilot review
+- Look at pilot data. Sanity check: does any persona get 0% identification? Does any rater get 100% (suspicious)?
+- Decide: launch as-is, or fix one thing and re-pilot.
+- Divide rater recruitment: 5 raters per team member.
+
+### Session 2 (3h) — Launch + parallel work
+- All: send the form to the 15 raters. Set deadline: end of week 3.
+- C: code `analyze.py` against the pilot data (binomial test, Wilson CI, per-persona breakdown). When real data lands later, just rerun.
+- A: continue methods section.
+- B: write the system section. Add reproducibility appendix (model version, seed, prompts, dates).
+- **If ahead of schedule:** B generates a style-scrubbed control set (same passages run through a neutralization prompt). C extends `analyze.py` to compare.
+
+### Async week 3 (per person, ~6h)
+- All: chase raters. By Friday, target 15 completed responses.
+- C: run primary analysis the moment data is in. Share results with A and B.
+
+**End-of-week deliverable:** 15 rater responses collected; primary statistical result with CI; per-persona breakdown.
+
+---
+
+## Week 4 — Writeup & presentation
+
+**Goal:** final report and presentation.
+
+### Session 1 (1h) — Results readout
+- C presents the numbers. Team agrees on the headline sentence.
+- Decide how to handle each per-persona finding (don't over-interpret underpowered subgroups).
+- Discuss: is the result a positive, a null, or mixed? Frame the discussion accordingly.
+
+### Session 2 (3h) — Writeup sprint
+- All in the same room writing their sections.
+- A: Methods done.
+- B: System done. Limitations subsection.
+- C: Results done with figures. Discussion section as a team.
+- Last hour: read the whole thing aloud. Cut anything weak.
+
+### Async week 4 (per person, ~6h)
+- Polish, build slides, rehearse presentation once.
+- One person owns the presentation deck; the others rehearse their parts.
+
+**End-of-week deliverable:** final report PDF + slide deck + tagged git release.
+
+---
+
+## Risks & cutlines
+
+| Risk | When it bites | Cut |
+|------|---------------|-----|
+| Rater recruitment slips | Week 3 | Drop to 12 raters; keep going. Note the underpowering. |
+| Agents sound too similar (default-voice leakage) | Week 2 passage spot-check | Report it as the finding. Style-scrubbed control becomes the *primary* analysis. |
+| LLM API hits rate limits | Week 2 | Cache aggressively; batch overnight. |
+| One team member out for a week | Any | Roles are decoupled enough to absorb 1 week of one person's slip without blocking the others. |
+
+---
+
+## Definition of done
+
+- All 5 files committed and runnable from a fresh checkout with one command.
+- 18 evaluation passages + 15 rater responses in the repo.
+- One sentence with a number and a CI: "Persona-seeded agents were identified by raters at X% accuracy [Wilson 95% CI: lo–hi], compared to a chance rate of 16.7%."
+- Pre-registration doc, dated before data collection, in the repo.
+- 8–12 page report + presentation.
