@@ -49,6 +49,12 @@
 - [ ] **HIER-01**: System maintains a cluster hierarchy that the oracle can drill into or zoom out of
 - [ ] **HIER-02**: Hierarchy is grown incrementally as the oracle refines (not computed in one shot upfront)
 
+### Database
+
+- [ ] **DB-01**: An `experiments` table stores one row per run with: strategy_id, persona_id, seed, dataset, total_turns, convergence_reason, headline metrics (turns-to-convergence, mean cognitive load, contradiction count), start/end timestamps
+- [ ] **DB-02**: A `turns` table stores one row per turn per experiment (FK: experiment_id) with: turn_index, action_type (show_full/show_subset/ask_question/stop), system_message, cognitive_load_score, cumulative_contradiction_count, convergence_signal
+- [ ] **DB-03**: An `oracle_feedback` table stores one row per parsed feedback item per turn (FK: turn_id), supporting multiple items per turn: feedback_type (global/cluster/point/instructional), raw_text, parsed_delta (JSON), target (cluster or item reference), is_contradiction
+
 ### Debug UI
 
 - [ ] **UI-01**: A web-based debug interface displays current clustering state (cluster names, assignments, soft probabilities), conversation history (turn-by-turn oracle feedback and system replies), and per-turn metrics (cognitive-load score, contradiction count, convergence signal) — intended for developer debugging, not end-user interaction
@@ -116,6 +122,9 @@
 | ORC-03 | Phase 3 | Pending |
 | ORC-04 | Phase 3 | Pending |
 | FB-04 | Phase 3 | Pending |
+| DB-01 | Phase 4 | Pending |
+| DB-02 | Phase 4 | Pending |
+| DB-03 | Phase 4 | Pending |
 | JUDG-01 | Phase 4 | Pending |
 | JUDG-02 | Phase 4 | Pending |
 | JUDG-03 | Phase 4 | Pending |
@@ -126,8 +135,8 @@
 | GEN-02 | Phase 6 | Pending |
 
 **Coverage:**
-- v1 requirements: 29 total
-- Mapped to phases: 29
+- v1 requirements: 32 total
+- Mapped to phases: 32
 - Unmapped: 0
 
 ---

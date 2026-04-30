@@ -3,7 +3,7 @@
 **Project:** Conversational Clustering — Multi-Agent Human-in-the-Loop System
 **Created:** 2026-04-29
 **Granularity:** Standard (5-8 phases)
-**Coverage:** 29/29 v1 requirements mapped
+**Coverage:** 32/32 v1 requirements mapped
 
 ---
 
@@ -59,11 +59,13 @@
 ### Phase 4: Judge Agent
 **Goal**: The system has a complete stopping mechanism that terminates conversations correctly under all three convergence conditions and records per-turn evaluation metrics
 **Depends on**: Phase 3
-**Requirements**: JUDG-01, JUDG-02, JUDG-03
+**Requirements**: DB-01, DB-02, DB-03, JUDG-01, JUDG-02, JUDG-03
 **Success Criteria** (what must be TRUE):
   1. `f_eval` terminates the turn loop when any of the three stopping criteria fires (turn budget exhausted, feedback magnitude decay below threshold, explicit oracle satisfaction signal) and each can be triggered independently by a synthetic oracle
   2. Every turn appends a metric bundle to the AuditLog containing: turns-to-convergence counter, cognitive-load score, contradiction count, and a pairwise validation accuracy sample
   3. Running the system with no dialogue (one-shot initial clustering, no oracle turns) produces the same metric bundle, enabling isolation of dialogue contribution in downstream analysis
+  4. Each completed run writes one row to `experiments`, one row per turn to `turns`, and one-or-more rows per turn to `oracle_feedback`; compound oracle messages (e.g. "split A and move X to B") produce multiple `oracle_feedback` rows for the same turn
+  5. Cross-run queries are possible: e.g. all contradiction events across all experiments, or turns with cognitive-load above threshold grouped by strategy
 **Plans**: TBD
 
 ### Phase 5: Ablation Harness and Strategies
@@ -126,6 +128,9 @@
 | ORC-03 | Phase 3 | Oracle Agent |
 | ORC-04 | Phase 3 | Oracle Agent |
 | FB-04 | Phase 3 | Feedback Types |
+| DB-01 | Phase 4 | Database |
+| DB-02 | Phase 4 | Database |
+| DB-03 | Phase 4 | Database |
 | JUDG-01 | Phase 4 | Judge Agent |
 | JUDG-02 | Phase 4 | Judge Agent |
 | JUDG-03 | Phase 4 | Judge Agent |
@@ -135,11 +140,11 @@
 | GEN-01 | Phase 6 | Generalization |
 | GEN-02 | Phase 6 | Generalization |
 
-**Total v1 requirements:** 29
-**Mapped:** 29
+**Total v1 requirements:** 32
+**Mapped:** 32
 **Unmapped:** 0
 
 ---
 
 *Roadmap created: 2026-04-29*
-*Last updated: 2026-04-30 — added UI-01 (debug web UI) to Phase 2*
+*Last updated: 2026-04-30 — added DB-01/02/03 (experiments/turns/oracle_feedback tables) to Phase 4*
