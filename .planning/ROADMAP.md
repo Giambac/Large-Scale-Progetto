@@ -3,7 +3,7 @@
 **Project:** Conversational Clustering — Multi-Agent Human-in-the-Loop System
 **Created:** 2026-04-29
 **Granularity:** Standard (5-8 phases)
-**Coverage:** 28/28 v1 requirements mapped
+**Coverage:** 29/29 v1 requirements mapped
 
 ---
 
@@ -34,13 +34,14 @@
 ### Phase 2: Clustering Agent Core
 **Goal**: The Clustering Agent's pure functions operate correctly on real state and the full range of oracle feedback types is parsed and applied
 **Depends on**: Phase 1
-**Requirements**: CLUS-01, CLUS-02, CLUS-03, CLUS-04, FB-01, FB-02, FB-03, HIER-01, HIER-02
+**Requirements**: CLUS-01, CLUS-02, CLUS-03, CLUS-04, FB-01, FB-02, FB-03, HIER-01, HIER-02, UI-01
 **Success Criteria** (what must be TRUE):
   1. `f_output` always returns a complete clustering assignment with no partial states, even mid-conversation
   2. `f_uncertainty` produces a ranked list of high-entropy boundary points, split candidates, and merge candidates derived from calibrated soft assignments
   3. `f_next_best_step` selects among show/ask/stop actions via a pluggable Strategy interface (RandomStrategy implemented); a mocked oracle loop runs correctly for 30+ turns with state integrity verified
   4. `f_next_state` applies global, cluster-level, and point-level oracle feedback and updates clustering state so that latest oracle intent wins on any contradiction
   5. The cluster hierarchy is navigable and grows incrementally as oracle feedback arrives — not pre-computed in one shot
+  6. A web-based debug UI is accessible during a running session, showing current cluster assignments with soft probabilities, turn-by-turn conversation history, and per-turn metrics (cognitive-load, contradiction count, convergence signal)
 **Plans**: TBD
 
 ### Phase 3: Oracle Agent
@@ -119,6 +120,7 @@
 | FB-03 | Phase 2 | Feedback Types |
 | HIER-01 | Phase 2 | Hierarchy |
 | HIER-02 | Phase 2 | Hierarchy |
+| UI-01 | Phase 2 | Debug UI |
 | ORC-01 | Phase 3 | Oracle Agent |
 | ORC-02 | Phase 3 | Oracle Agent |
 | ORC-03 | Phase 3 | Oracle Agent |
@@ -133,11 +135,11 @@
 | GEN-01 | Phase 6 | Generalization |
 | GEN-02 | Phase 6 | Generalization |
 
-**Total v1 requirements:** 28
-**Mapped:** 28
+**Total v1 requirements:** 29
+**Mapped:** 29
 **Unmapped:** 0
 
 ---
 
 *Roadmap created: 2026-04-29*
-*Last updated: 2026-04-29 after initial creation*
+*Last updated: 2026-04-30 — added UI-01 (debug web UI) to Phase 2*

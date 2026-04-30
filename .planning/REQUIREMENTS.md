@@ -49,6 +49,10 @@
 - [ ] **HIER-01**: System maintains a cluster hierarchy that the oracle can drill into or zoom out of
 - [ ] **HIER-02**: Hierarchy is grown incrementally as the oracle refines (not computed in one shot upfront)
 
+### Debug UI
+
+- [ ] **UI-01**: A web-based debug interface displays current clustering state (cluster names, assignments, soft probabilities), conversation history (turn-by-turn oracle feedback and system replies), and per-turn metrics (cognitive-load score, contradiction count, convergence signal) — intended for developer debugging, not end-user interaction
+
 ### Ablation & Evaluation
 
 - [ ] **ALAB-01**: `f_next_best_step` exposes a swappable Strategy interface with at least 3 registered strategies: Random, UncertaintyDriven, BoundaryDriven (and optionally InformationGain)
@@ -80,7 +84,7 @@
 
 | Feature | Reason |
 |---------|--------|
-| Web UI / dataset upload / persistent sessions | Solo/pair scope is CLI or notebook; UI adds complexity without advancing the research question |
+| Dataset upload / persistent sessions (production) | Out of scope for debug-focused UI; CLI handles dataset ingestion |
 | UMAP/t-SNE visualization | Deferred to trio/quartet scope tier |
 | Full N×M human oracle study at scale | Requires larger team; LLM oracles + small human validation (v2) is sufficient for v1 claims |
 | Automatic K optimization (silhouette, BIC) | Anti-feature: bypasses oracle as objective function; K changes only through oracle intent |
@@ -106,6 +110,7 @@
 | FB-03 | Phase 2 | Pending |
 | HIER-01 | Phase 2 | Pending |
 | HIER-02 | Phase 2 | Pending |
+| UI-01 | Phase 2 | Pending |
 | ORC-01 | Phase 3 | Pending |
 | ORC-02 | Phase 3 | Pending |
 | ORC-03 | Phase 3 | Pending |
@@ -121,8 +126,8 @@
 | GEN-02 | Phase 6 | Pending |
 
 **Coverage:**
-- v1 requirements: 28 total
-- Mapped to phases: 28
+- v1 requirements: 29 total
+- Mapped to phases: 29
 - Unmapped: 0
 
 ---
