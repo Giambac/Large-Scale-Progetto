@@ -29,7 +29,14 @@
   2. The three stopping conditions (turn budget, state-change diminishing returns, explicit oracle satisfaction token) are written as code-ready specifications, not prose
   3. Running the pipeline on the selected dataset produces a `ClusteringState` with HDBSCAN cluster labels, LLM-generated names/descriptions, and per-point soft assignment probability distributions
   4. Any turn's `ClusteringState` can be serialized to JSONL and deserialized back without data loss
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Wave 0: test scaffold (pytest + 6 test stub files + shared fixtures)
+- [ ] 01-02-PLAN.md — Wave 1: data_loader.py (PRE-01: download, split, hash) + stopping.py (PRE-02: typed criteria spec)
+- [ ] 01-03-PLAN.md — Wave 2: embedding_store.py (FOUND-01: all-mpnet-base-v2, embeddings.npy)
+- [ ] 01-04-PLAN.md — Wave 3: state.py + clustering.py + cluster_naming.py (FOUND-02, FOUND-03)
+- [ ] 01-05-PLAN.md — Wave 4: serialization.py + setup_phase1.py end-to-end script (FOUND-04)
 
 ### Phase 2: Clustering Agent Core
 **Goal**: The Clustering Agent's pure functions operate correctly on real state and the full range of oracle feedback types is parsed and applied
@@ -94,7 +101,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Pre-Code Obligations and Foundation | 0/? | Not started | - |
+| 1. Pre-Code Obligations and Foundation | 0/5 | Planned | - |
 | 2. Clustering Agent Core | 0/? | Not started | - |
 | 3. Oracle Agent | 0/? | Not started | - |
 | 4. Judge Agent | 0/? | Not started | - |
@@ -149,3 +156,4 @@
 
 *Roadmap created: 2026-04-29*
 *Last updated: 2026-04-30 — added DB-01/02/03 (experiments/turns/oracle_feedback tables) to Phase 4*
+*Last updated: 2026-05-05 — Phase 1 planned: 5 plans, 4 waves*
