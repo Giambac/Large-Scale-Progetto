@@ -698,22 +698,25 @@ This phase has no authentication, session management, user-facing input, or cryp
 | A4 | CONTEXT.md D-02's "review_text" is a project-level naming convention, not the HuggingFace field name (which is "text") | Dataset section | If "review_text" is a v2 field or requires different loading config, data loader will fail — catch with assert |
 | A5 | `metric="euclidean"` is appropriate for all-mpnet-base-v2 normalized embeddings in HDBSCAN | Pattern 4 | Cosine distance may produce better clusters; research suggests either works; euclidean is the HDBSCAN default |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **LLM API provider selection**
    - What we know: Project requires an LLM for cluster naming; Anthropic Claude is available (this session uses it); OpenAI is an alternative.
    - What's unclear: Which API key the researcher has configured; whether the project commits to one provider or abstracts behind an interface.
    - Recommendation: Design `ClusterNamer` as a protocol/interface with a single concrete implementation for Phase 1; pick the API the researcher has a key for.
+   - RESOLVED: ClusterNamer is a Protocol; AnthropicClusterNamer is the v1 implementation; key loaded from env ANTHROPIC_API_KEY
 
 2. **Noise point assignment strategy**
    - What we know: HDBSCAN labels noise points as -1. D-13 requires complete assignments (all N items must appear in `assignments`). The current Pattern 4 assigns noise to `argmax(soft_probs[i])`.
    - What's unclear: Whether argmax is the intended strategy or whether noise items should form their own cluster.
    - Recommendation: Assign noise to `argmax(soft_probs)` — this preserves the anytime behavior requirement (CLUS-01) and avoids a spurious "noise" cluster. Document this decision explicitly in `clustering.py`.
+   - RESOLVED: assign noise points via argmax(soft_probs[item_id]) — same as nearest cluster
 
 3. **Actual achievable K for this dataset**
    - What we know: HDBSCAN discovers K automatically. The project targets 3–10 clusters.
    - What's unclear: Whether review data at 15K points + 768d embeddings will produce a sensible K with the starting hyperparameters.
    - Recommendation: Run a quick experiment in a notebook before fixing hyperparameters in code; document the chosen values and rationale.
+   - RESOLVED: empirical; HDBSCAN with MIN_CLUSTER_SIZE=50 on 15K points expected to produce 10-40 clusters; verify in Phase 1 execution
 
 ## State of the Art
 
