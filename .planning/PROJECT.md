@@ -27,12 +27,19 @@ The interaction loop converges toward oracle-accepted clusterings efficiently, w
 - [ ] Produce at least one defensible quantified claim with a confidence interval
 - [ ] Enable generalization: codify oracle preferences into a function for new items
 
-### Out of Scope
+### Out of Scope (v1)
 
-- Web UI persistent sessions — solo/pair scope; session state is not persisted across server restarts
-- Multiple clustering backends (k-means / HDBSCAN / LLM-first) — start with one representation
-- UMAP/t-SNE visualization — deferred to trio/quartet scope tier
-- Full N×M human oracle study — requires larger team; solo scope uses LLM oracles + small human validation
+- Automatic K optimization (silhouette, BIC) — anti-feature; K changes only through oracle intent
+- Showing raw model internals to oracle — increases cognitive load without proportional gain
+
+### Trio/Quartet Scope (v2)
+
+Features deferred until team grows to 3–4 or v1 is complete:
+
+- **UMAP/t-SNE visualization** — 2D embedding projection in the web UI (VIZ-V2-01)
+- **Multiple clustering backends** — k-means, LLM-first alongside HDBSCAN (BACK-V2-01)
+- **Persistent sessions** — save and resume state across server restarts (UI-V2-01)
+- **Full N×M headline experiment** — N oracles × M tasks, LLM oracles for scale + human oracles (N ≥ 10, within-subject), comparing conversational interface vs. default-parameter baseline on oracle satisfaction, turns-to-convergence, and generalization accuracy (EXP-V2-01)
 
 ## Context
 

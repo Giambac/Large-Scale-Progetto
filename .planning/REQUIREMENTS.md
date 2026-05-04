@@ -71,17 +71,31 @@
 - [ ] **GEN-01**: After oracle acceptance, system codifies oracle preferences into a reusable mapping function (prompt, classifier, or rule set) that assigns new items to clusters
 - [ ] **GEN-02**: Generalization function is evaluated on the frozen held-out split; accuracy is validated by the oracle on a small sample
 
-## v2 Requirements
+## v2 Requirements (Trio/Quartet Scope)
+
+These requirements activate when the team grows to 3–4 people or v1 is complete and time permits.
+
+### Headline Experiment
+
+- **EXP-V2-01**: Run the full N oracles × M tasks experiment with both LLM oracles (for scale) and human oracles (N ≥ 10, within-subject, randomized task order), comparing the conversational interface against a sensible default-parameter baseline on three metrics: oracle satisfaction, turns-to-convergence, and generalization accuracy
 
 ### Evaluation Depth
 
 - **EVAL-V2-01**: Soft-assignment calibration — reliability diagram showing whether system-flagged boundary points are genuinely ambiguous
-- **EVAL-V2-02**: Human oracle validation study (N >= 5-10, within-subject, randomized order) to confirm LLM oracle simulation results generalize
+- **EVAL-V2-02**: Human oracle validation study (N ≥ 10, within-subject, randomized order) — quantifies the simulated-vs-human gap as a reported finding
 
 ### Extended Clustering Backends
 
 - **BACK-V2-01**: Multiple clustering backends (k-means, LLM-first) as swappable components alongside HDBSCAN
 - **BACK-V2-02**: Representation choice exposed as a config parameter (raw features vs. sentence embeddings vs. fine-tuned embeddings)
+
+### Visualization
+
+- **VIZ-V2-01**: UMAP/t-SNE 2D projection of embedding space displayed in the web UI, with cluster membership color-coded and soft-assignment opacity encoding
+
+### Persistence
+
+- **UI-V2-01**: Persistent sessions — clustering state and conversation history are saved to disk and can be resumed across server restarts
 
 ### Synthetic Data
 
@@ -91,12 +105,8 @@
 
 | Feature | Reason |
 |---------|--------|
-| Persistent sessions (production) | Session state is not persisted across server restarts; CLI handles orchestration |
-| UMAP/t-SNE visualization | Deferred to trio/quartet scope tier |
-| Full N×M human oracle study at scale | Requires larger team; LLM oracles + small human validation (v2) is sufficient for v1 claims |
 | Automatic K optimization (silhouette, BIC) | Anti-feature: bypasses oracle as objective function; K changes only through oracle intent |
 | Showing raw model internals to oracle | Increases cognitive load without proportional annotation quality gain (Prodigy principle) |
-| Synthetic data agent | Acknowledged but explicitly deferred; real curated datasets used in v1 |
 
 ## Traceability
 
