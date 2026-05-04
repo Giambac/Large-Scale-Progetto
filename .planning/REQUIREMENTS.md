@@ -12,7 +12,7 @@
 
 ### Foundation
 
-- [ ] **FOUND-01**: System ingests a text dataset and computes sentence embeddings (all-mpnet-base-v2) stored in a read-only EmbeddingStore
+- [ ] **FOUND-01**: System ingests any text dataset (CSV or JSONL) and computes sentence embeddings (all-mpnet-base-v2) stored in a read-only EmbeddingStore — no dataset-specific configuration required
 - [ ] **FOUND-02**: System produces an initial HDBSCAN clustering with cluster names and natural-language descriptions
 - [ ] **FOUND-03**: System produces soft assignments — per-point probability distribution over K clusters (not hard labels only)
 - [ ] **FOUND-04**: System serializes full conversation + clustering state to JSONL AuditLog each turn (required for CI computation and reproducibility)
@@ -58,6 +58,7 @@
 ### Debug UI
 
 - [ ] **UI-01**: A web-based debug interface displays current clustering state (cluster names, assignments, soft probabilities), conversation history (turn-by-turn oracle feedback and system replies), and per-turn metrics (cognitive-load score, contradiction count, convergence signal) — intended for developer debugging, not end-user interaction
+- [ ] **UI-02**: The web UI allows uploading a dataset file (e.g. CSV or JSONL) to start a new session on a different dataset without restarting from the CLI
 
 ### Ablation & Evaluation
 
@@ -90,7 +91,7 @@
 
 | Feature | Reason |
 |---------|--------|
-| Dataset upload / persistent sessions (production) | Out of scope for debug-focused UI; CLI handles dataset ingestion |
+| Persistent sessions (production) | Session state is not persisted across server restarts; CLI handles orchestration |
 | UMAP/t-SNE visualization | Deferred to trio/quartet scope tier |
 | Full N×M human oracle study at scale | Requires larger team; LLM oracles + small human validation (v2) is sufficient for v1 claims |
 | Automatic K optimization (silhouette, BIC) | Anti-feature: bypasses oracle as objective function; K changes only through oracle intent |
@@ -117,6 +118,7 @@
 | HIER-01 | Phase 2 | Pending |
 | HIER-02 | Phase 2 | Pending |
 | UI-01 | Phase 2 | Pending |
+| UI-02 | Phase 2 | Pending |
 | ORC-01 | Phase 3 | Pending |
 | ORC-02 | Phase 3 | Pending |
 | ORC-03 | Phase 3 | Pending |
@@ -135,10 +137,10 @@
 | GEN-02 | Phase 6 | Pending |
 
 **Coverage:**
-- v1 requirements: 32 total
-- Mapped to phases: 32
+- v1 requirements: 33 total
+- Mapped to phases: 33
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-29*
-*Last updated: 2026-04-29 — phase assignments confirmed by ROADMAP.md creation*
+*Last updated: 2026-05-04 — added UI-02 (dataset upload via web UI)*

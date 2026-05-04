@@ -34,7 +34,7 @@
 ### Phase 2: Clustering Agent Core
 **Goal**: The Clustering Agent's pure functions operate correctly on real state and the full range of oracle feedback types is parsed and applied
 **Depends on**: Phase 1
-**Requirements**: CLUS-01, CLUS-02, CLUS-03, CLUS-04, FB-01, FB-02, FB-03, HIER-01, HIER-02, UI-01
+**Requirements**: CLUS-01, CLUS-02, CLUS-03, CLUS-04, FB-01, FB-02, FB-03, HIER-01, HIER-02, UI-01, UI-02
 **Success Criteria** (what must be TRUE):
   1. `f_output` always returns a complete clustering assignment with no partial states, even mid-conversation
   2. `f_uncertainty` produces a ranked list of high-entropy boundary points, split candidates, and merge candidates derived from calibrated soft assignments
@@ -123,6 +123,7 @@
 | HIER-01 | Phase 2 | Hierarchy |
 | HIER-02 | Phase 2 | Hierarchy |
 | UI-01 | Phase 2 | Debug UI |
+| UI-02 | Phase 2 | Debug UI |
 | ORC-01 | Phase 3 | Oracle Agent |
 | ORC-02 | Phase 3 | Oracle Agent |
 | ORC-03 | Phase 3 | Oracle Agent |
@@ -140,8 +141,8 @@
 | GEN-01 | Phase 6 | Generalization |
 | GEN-02 | Phase 6 | Generalization |
 
-**Total v1 requirements:** 32
-**Mapped:** 32
+**Total v1 requirements:** 33
+**Mapped:** 33
 **Unmapped:** 0
 
 ---
