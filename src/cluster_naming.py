@@ -84,6 +84,12 @@ def name_cluster(
     )
 
     raw_text = response.content[0].text.strip()
+    # Strip markdown code fences if the model wraps its JSON response
+    if raw_text.startswith("```"):
+        raw_text = raw_text.split("```")[1]
+        if raw_text.startswith("json"):
+            raw_text = raw_text[4:]
+        raw_text = raw_text.strip()
     result = json.loads(raw_text)
 
     assert "name" in result and "description" in result, (
@@ -134,10 +140,9 @@ class GoogleClusterNamer:
         self,
         sample_texts: list[str],
         cluster_id: int,
-        max_samples: int = 5,
     ) -> dict[str, str]:
         from google import genai  # type: ignore[import]
-        samples = sample_texts[:max_samples]
+        samples = sample_texts[:5]
         assert len(samples) > 0, f"Cannot name cluster {cluster_id}: no sample texts provided"
 
         prompt = (
