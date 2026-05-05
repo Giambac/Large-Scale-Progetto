@@ -3,9 +3,11 @@ cluster_naming.py — LLM-based cluster name and description generation (FOUND-0
 
 Design: ClusterNamer is a Protocol (structural subtyping) so any object
 that implements name_cluster(sample_texts, cluster_id) -> dict works.
-This enables swapping Anthropic/OpenAI clients without changing clustering.py.
+This enables swapping Anthropic/OpenAI/Google clients without changing clustering.py.
 
-The concrete AnthropicClusterNamer uses claude-haiku-4-5 for cost efficiency.
+Concrete implementations:
+  - AnthropicClusterNamer: uses claude-haiku-4-5 (ANTHROPIC_API_KEY)
+  - GoogleClusterNamer: uses gemini-2.0-flash (GOOGLE_API_KEY / Google AI Studio)
 """
 from __future__ import annotations
 
@@ -112,6 +114,61 @@ class AnthropicClusterNamer:
         cluster_id: int,
     ) -> dict[str, str]:
         return name_cluster(self._client, sample_texts, cluster_id)
+
+
+class GoogleClusterNamer:
+    """
+    Concrete ClusterNamer backed by Google AI Studio (Gemini).
+    Satisfies the ClusterNamer Protocol.
+
+    Requires: pip install google-generativeai
+    API key: set GOOGLE_API_KEY env var (Google AI Studio key).
+    """
+
+    def __init__(self, api_key: str, model: str = "gemini-2.0-flash") -> None:
+        from google import genai  # type: ignore[import]
+        self._client = genai.Client(api_key=api_key)
+        self._model = model
+
+    def name_cluster(
+        self,
+        sample_texts: list[str],
+        cluster_id: int,
+        max_samples: int = 5,
+    ) -> dict[str, str]:
+        from google import genai  # type: ignore[import]
+        samples = sample_texts[:max_samples]
+        assert len(samples) > 0, f"Cannot name cluster {cluster_id}: no sample texts provided"
+
+        prompt = (
+            f"You are analyzing a cluster of customer reviews from an arts and crafts store. "
+            f"Here are {len(samples)} representative reviews from cluster {cluster_id}:\n\n"
+            + "\n---\n".join(samples)
+            + "\n\nRespond ONLY with a JSON object with exactly two keys:\n"
+            "  'name': a 2-5 word label for what unifies these reviews\n"
+            "  'description': 1-2 sentences describing what these reviews have in common\n"
+            "No other text. No markdown. Just the JSON object."
+        )
+
+        response = self._client.models.generate_content(model=self._model, contents=prompt)
+        raw_text = response.text.strip()
+        # Strip markdown code fences if Gemini wraps the JSON
+        if raw_text.startswith("```"):
+            raw_text = raw_text.split("```")[1]
+            if raw_text.startswith("json"):
+                raw_text = raw_text[4:]
+        result = json.loads(raw_text.strip())
+
+        assert "name" in result and "description" in result, (
+            f"LLM returned bad schema for cluster {cluster_id}: {result}"
+        )
+        assert isinstance(result["name"], str) and len(result["name"]) > 0, (
+            f"LLM 'name' is empty or not a string for cluster {cluster_id}: {result}"
+        )
+        assert isinstance(result["description"], str) and len(result["description"]) > 0, (
+            f"LLM 'description' is empty or not a string for cluster {cluster_id}: {result}"
+        )
+        return {"name": result["name"], "description": result["description"]}
 
 
 def name_all_clusters(
