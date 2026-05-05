@@ -9,7 +9,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: Pre-Code Obligations and Foundation** - Lock held-out data, operationalize stopping criteria, build embedding infrastructure and initial clustering
+- [x] **Phase 1: Pre-Code Obligations and Foundation** - Lock held-out data, operationalize stopping criteria, build embedding infrastructure and initial clustering
 - [ ] **Phase 2: Clustering Agent Core** - Implement all `f_*` functions, feedback types, and hierarchy
 - [ ] **Phase 3: Oracle Agent** - Build LLM-simulated oracle with noise parameters, cognitive-load modeling, and drift detection
 - [ ] **Phase 4: Judge Agent** - Implement convergence detection, per-turn metrics, and no-dialogue baseline
@@ -32,11 +32,11 @@
 **Plans**: 5 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Wave 0: test scaffold (pytest + 6 test stub files + shared fixtures)
-- [ ] 01-02-PLAN.md — Wave 1: data_loader.py (PRE-01: download, split, hash) + stopping.py (PRE-02: typed criteria spec)
-- [ ] 01-03-PLAN.md — Wave 2: embedding_store.py (FOUND-01: all-mpnet-base-v2, embeddings.npy)
-- [ ] 01-04-PLAN.md — Wave 3: state.py + clustering.py + cluster_naming.py (FOUND-02, FOUND-03)
-- [ ] 01-05-PLAN.md — Wave 4: serialization.py + setup_phase1.py end-to-end script (FOUND-04)
+- [x] 01-01-PLAN.md — Wave 0: test scaffold (pytest + 6 test stub files + shared fixtures)
+- [x] 01-02-PLAN.md — Wave 1: data_loader.py (PRE-01: download, split, hash) + stopping.py (PRE-02: typed criteria spec)
+- [x] 01-03-PLAN.md — Wave 2: embedding_store.py (FOUND-01: all-mpnet-base-v2, embeddings.npy)
+- [x] 01-04-PLAN.md — Wave 3: state.py + clustering.py + cluster_naming.py (FOUND-02, FOUND-03)
+- [x] 01-05-PLAN.md — Wave 4: serialization.py + setup_phase1.py end-to-end script (FOUND-04)
 
 ### Phase 2: Clustering Agent Core
 **Goal**: The Clustering Agent's pure functions operate correctly on real state and the full range of oracle feedback types is parsed and applied
@@ -101,7 +101,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Pre-Code Obligations and Foundation | 0/5 | Planned | - |
+| 1. Pre-Code Obligations and Foundation | 5/5 | Complete | 2026-05-05 |
 | 2. Clustering Agent Core | 0/? | Not started | - |
 | 3. Oracle Agent | 0/? | Not started | - |
 | 4. Judge Agent | 0/? | Not started | - |
