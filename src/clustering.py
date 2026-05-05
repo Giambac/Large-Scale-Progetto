@@ -146,6 +146,7 @@ def build_initial_clustering_state(
     embeddings: np.ndarray,
     records: list[dict],
     namer: "ClusterNamer",
+    min_cluster_size: int | None = None,
 ) -> ClusteringState:
     """
     Full pipeline: embeddings → ClusteringState at turn_index=0.
@@ -168,7 +169,7 @@ def build_initial_clustering_state(
         f"Record count {len(records)} != embedding count {len(embeddings)}"
     )
 
-    labels, soft_probs_matrix = run_hdbscan(embeddings)
+    labels, soft_probs_matrix = run_hdbscan(embeddings, min_cluster_size=min_cluster_size)
     assignments = assign_noise_to_nearest(labels, soft_probs_matrix)
 
     # Group item_ids by cluster_id
