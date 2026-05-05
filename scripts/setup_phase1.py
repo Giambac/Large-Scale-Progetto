@@ -12,11 +12,12 @@ Prerequisites (must exist before running this script):
     - dataset/held_out.jsonl and dataset/held_out.sha256 (from data_loader.py)
     - dataset/train.jsonl (from data_loader.py)
     - embeddings/embeddings.npy (from embedding_store.py)
-    - ANTHROPIC_API_KEY environment variable set
+    - ANTHROPIC_API_KEY or GOOGLE_API_KEY environment variable set
 
 Usage:
     python scripts/setup_phase1.py
     python scripts/setup_phase1.py --audit-log custom_audit.jsonl
+    python scripts/setup_phase1.py --n-items 500 --model gemini-1.5-flash
 """
 from __future__ import annotations
 
@@ -53,6 +54,23 @@ def main() -> None:
         default="audit_log.jsonl",
         help="Path to AuditLog JSONL (appended, not overwritten)",
     )
+    parser.add_argument(
+        "--n-items",
+        type=int,
+        default=None,
+        help="Use only first N items from training set (for quick smoke tests)",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Override LLM model (e.g. gemini-1.5-flash, gemini-2.0-flash, claude-haiku-4-5)",
+    )
+    parser.add_argument(
+        "--min-cluster-size",
+        type=int,
+        default=None,
+        help="Override HDBSCAN min_cluster_size (default: auto-scaled from data size)",
+    )
     args = parser.parse_args()
 
     # Validate prerequisites
@@ -67,10 +85,12 @@ def main() -> None:
             "Run src/data_loader.py and src/embedding_store.py first."
         )
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    assert api_key, (
-        "ANTHROPIC_API_KEY environment variable is not set.\n"
-        "Export it before running: export ANTHROPIC_API_KEY=sk-ant-..."
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    google_key = os.environ.get("GOOGLE_API_KEY", "")
+    assert anthropic_key or google_key, (
+        "No LLM API key found. Set one of:\n"
+        "  export ANTHROPIC_API_KEY=sk-ant-...   (Anthropic / Claude)\n"
+        "  export GOOGLE_API_KEY=...              (Google AI Studio / Gemini)"
     )
 
     # Step 1: Verify held-out hash (crashes on mismatch)
@@ -97,29 +117,44 @@ def main() -> None:
         f"Record count {len(records)} != embedding count {len(store)}. "
         "Did you re-generate the dataset without re-computing embeddings?"
     )
+
+    # Apply --n-items subset if requested
+    if args.n_items is not None:
+        assert 1 <= args.n_items <= len(records), (
+            f"--n-items {args.n_items} out of range [1, {len(records)}]"
+        )
+        records = records[: args.n_items]
+        import numpy as np
+        embeddings_subset = store.get_all()[: args.n_items]
+        print(f"      Using subset: {len(records)} of {len(store)} records (--n-items).")
+    else:
+        embeddings_subset = store.get_all()
+
     print(f"      Loaded {len(records)} records.")
 
     # Step 4: Build initial ClusteringState
     print("[4/5] Building initial ClusteringState (HDBSCAN + LLM naming)...")
     print("      This may take 1-5 minutes depending on the number of clusters.")
-    import anthropic
-    from src.cluster_naming import AnthropicClusterNamer
     from src.clustering import build_initial_clustering_state
 
-    # Build client and namer outside any try block — per CLAUDE.md, only external
-    # API calls may have try/except. The try/except for anthropic.APIError belongs
-    # inside cluster_naming.py's name_cluster(), wrapping only client.messages.create().
-    # In this CLI entry point, a top-level try/except Exception is acceptable only
-    # at the outermost main() boundary; internal pipeline calls are outside try.
-    client = anthropic.Anthropic(api_key=api_key)
-    namer = AnthropicClusterNamer(client)
-    # build_initial_clustering_state is a pure pipeline function — called OUTSIDE try.
-    # If the LLM call inside it raises anthropic.APIError, that error propagates up
-    # and will be caught by the outermost exception handler at the CLI entry point.
+    # Select namer based on available API key (Anthropic preferred, Google fallback)
+    if anthropic_key:
+        import anthropic
+        from src.cluster_naming import AnthropicClusterNamer
+        model = args.model or "claude-haiku-4-5"
+        print(f"      Using Anthropic ({model}) for cluster naming.")
+        namer = AnthropicClusterNamer(anthropic.Anthropic(api_key=anthropic_key))
+    else:
+        from src.cluster_naming import GoogleClusterNamer
+        model = args.model or "gemini-1.5-flash"
+        print(f"      Using Google AI Studio ({model}) for cluster naming.")
+        namer = GoogleClusterNamer(api_key=google_key, model=model)
+
     state = build_initial_clustering_state(
-        embeddings=store.get_all(),
+        embeddings=embeddings_subset,
         records=records,
         namer=namer,
+        min_cluster_size=args.min_cluster_size,
     )
 
     assert len(state.clusters) > 0, (
