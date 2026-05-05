@@ -64,9 +64,8 @@ def split_dataset(
     rng = random.Random(seed)
     rng.shuffle(indices)
     n_train = int(len(records) * TRAIN_RATIO)
-    train_indices = set(indices[:n_train])
-    train = [records[i] for i in range(len(records)) if i in train_indices]
-    held_out = [records[i] for i in range(len(records)) if i not in train_indices]
+    train = [records[i] for i in indices[:n_train]]
+    held_out = [records[i] for i in indices[n_train:]]
     assert len(train) + len(held_out) == len(records)
     return train, held_out
 
@@ -144,6 +143,11 @@ def download_and_save_dataset(
     train, held_out = split_dataset(records, seed=seed)
     assert len(train) == 12_000, f"Expected 12000 train records, got {len(train)}"
     assert len(held_out) == 3_000, f"Expected 3000 held-out records, got {len(held_out)}"
+
+    # Re-index train records so item_id == row index (0..N_train-1).
+    # This ensures EmbeddingStore row index == item_id throughout (D-11).
+    # held_out keeps original item_ids since it is never used with EmbeddingStore.
+    train = [{"item_id": i, "text": r["text"]} for i, r in enumerate(train)]
 
     # Write train split
     with open(train_path, "w", encoding="utf-8") as f:
