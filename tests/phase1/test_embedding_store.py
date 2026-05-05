@@ -39,18 +39,26 @@ def test_embedding_store_rejects_1d_array():
 def test_embedding_store_get_all_is_readonly(tmp_path, mock_embeddings):
     """
     The internal array should not be mutated by callers.
-    If EmbeddingStore exposes a copy or read-only view, mutation raises ValueError.
-    If it exposes the array directly, this test documents the expectation.
+    If EmbeddingStore exposes a read-only view, mutation raises ValueError.
+    If it exposes a copy, the store's internal data is unchanged after mutation.
+    Both are acceptable implementations of the no-mutation contract.
     """
     save_path = str(tmp_path / "emb.npy")
     np.save(save_path, mock_embeddings)
     store = EmbeddingStore.load(save_path)
     arr = store.get_all()
-    # Either arr is read-only (flags.writeable is False) OR it's a copy.
-    # Both are acceptable. Test that the store's internal data is not mutated.
-    original_val = arr[0, 0]
-    arr[0, 0] = 9999.0
-    # Internal state should be unchanged if get_all returns a copy
-    # OR the mutation raises ValueError if read-only. Either is acceptable.
-    # We just confirm the call does not crash unexpectedly.
-    assert store.get_all() is not None  # store is still usable
+    # Attempt mutation — either raises ValueError (read-only) or succeeds (copy).
+    # Both outcomes satisfy the contract: internal state must not be corrupted.
+    if arr.flags.writeable:
+        # get_all() returned a copy — mutation succeeds but does not affect the store
+        arr[0, 0] = 9999.0
+        # Internal data must be unchanged
+        assert store.get_all()[0, 0] != 9999.0, (
+            "get_all() must return a copy or read-only view, not a mutable alias"
+        )
+    else:
+        # get_all() returned a read-only view — mutation must raise ValueError
+        with pytest.raises(ValueError):
+            arr[0, 0] = 9999.0
+    # Store is still usable after the mutation attempt
+    assert store.get_all() is not None
