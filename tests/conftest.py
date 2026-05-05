@@ -64,4 +64,4 @@ def mock_embeddings():
     Values are deterministic (seeded) for reproducibility.
     """
     rng = np.random.default_rng(seed=42)
-    return rng.random((5, 768), dtype=np.float32)
+    return rng.random((5, 768)).astype(np.float32)
