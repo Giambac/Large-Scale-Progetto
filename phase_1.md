@@ -1,4 +1,4 @@
-# Designing Large Scale AIS — GSD
+# Designing Large Scale AIS
 
 ## Phase 1
 
