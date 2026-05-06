@@ -8,6 +8,7 @@ This enables swapping Anthropic/OpenAI/Google clients without changing clusterin
 Concrete implementations:
   - AnthropicClusterNamer: uses claude-haiku-4-5 (ANTHROPIC_API_KEY)
   - GoogleClusterNamer: uses gemini-2.0-flash (GOOGLE_API_KEY / Google AI Studio)
+  - OpenAIClusterNamer: uses gpt-4o-mini (OPENAI_API_KEY)
 """
 from __future__ import annotations
 
@@ -163,6 +164,64 @@ class GoogleClusterNamer:
             if raw_text.startswith("json"):
                 raw_text = raw_text[4:]
         result = json.loads(raw_text.strip())
+
+        assert "name" in result and "description" in result, (
+            f"LLM returned bad schema for cluster {cluster_id}: {result}"
+        )
+        assert isinstance(result["name"], str) and len(result["name"]) > 0, (
+            f"LLM 'name' is empty or not a string for cluster {cluster_id}: {result}"
+        )
+        assert isinstance(result["description"], str) and len(result["description"]) > 0, (
+            f"LLM 'description' is empty or not a string for cluster {cluster_id}: {result}"
+        )
+        return {"name": result["name"], "description": result["description"]}
+
+
+class OpenAIClusterNamer:
+    """
+    Concrete ClusterNamer backed by OpenAI.
+    Satisfies the ClusterNamer Protocol.
+
+    Requires: pip install openai
+    API key: set OPENAI_API_KEY env var.
+    """
+
+    def __init__(self, api_key: str, model: str = "gpt-4o-mini") -> None:
+        from openai import OpenAI  # type: ignore[import]
+        self._client = OpenAI(api_key=api_key)
+        self._model = model
+
+    def name_cluster(
+        self,
+        sample_texts: list[str],
+        cluster_id: int,
+    ) -> dict[str, str]:
+        samples = sample_texts[:5]
+        assert len(samples) > 0, f"Cannot name cluster {cluster_id}: no sample texts provided"
+
+        prompt = (
+            f"You are analyzing a cluster of customer reviews from an arts and crafts store. "
+            f"Here are {len(samples)} representative reviews from cluster {cluster_id}:\n\n"
+            + "\n---\n".join(samples)
+            + "\n\nRespond ONLY with a JSON object with exactly two keys:\n"
+            "  'name': a 2-5 word label for what unifies these reviews\n"
+            "  'description': 1-2 sentences describing what these reviews have in common\n"
+            "No other text. No markdown. Just the JSON object."
+        )
+
+        response = self._client.chat.completions.create(
+            model=self._model,
+            max_completion_tokens=256,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        raw_text = response.choices[0].message.content.strip()
+        if raw_text.startswith("```"):
+            raw_text = raw_text.split("```")[1]
+            if raw_text.startswith("json"):
+                raw_text = raw_text[4:]
+            raw_text = raw_text.strip()
+        result = json.loads(raw_text)
 
         assert "name" in result and "description" in result, (
             f"LLM returned bad schema for cluster {cluster_id}: {result}"

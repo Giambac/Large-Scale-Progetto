@@ -12,7 +12,7 @@ Prerequisites (must exist before running this script):
     - dataset/held_out.jsonl and dataset/held_out.sha256 (from data_loader.py)
     - dataset/train.jsonl (from data_loader.py)
     - embeddings/embeddings.npy (from embedding_store.py)
-    - ANTHROPIC_API_KEY or GOOGLE_API_KEY environment variable set
+    - ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY environment variable set
 
 Usage:
     python scripts/setup_phase1.py
@@ -87,10 +87,12 @@ def main() -> None:
 
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
     google_key = os.environ.get("GOOGLE_API_KEY", "")
-    assert anthropic_key or google_key, (
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    assert anthropic_key or google_key or openai_key, (
         "No LLM API key found. Set one of:\n"
-        "  export ANTHROPIC_API_KEY=sk-ant-...   (Anthropic / Claude)\n"
-        "  export GOOGLE_API_KEY=...              (Google AI Studio / Gemini)"
+        "  $env:ANTHROPIC_API_KEY='sk-ant-...'   (Anthropic / Claude)\n"
+        "  $env:GOOGLE_API_KEY='...'              (Google AI Studio / Gemini)\n"
+        "  $env:OPENAI_API_KEY='sk-...'           (OpenAI)"
     )
 
     # Step 1: Verify held-out hash (crashes on mismatch)
@@ -137,13 +139,18 @@ def main() -> None:
     print("      This may take 1-5 minutes depending on the number of clusters.")
     from src.clustering import build_initial_clustering_state
 
-    # Select namer based on available API key (Anthropic preferred, Google fallback)
+    # Select namer based on available API key (Anthropic > OpenAI > Google)
     if anthropic_key:
         import anthropic
         from src.cluster_naming import AnthropicClusterNamer
         model = args.model or "claude-haiku-4-5"
         print(f"      Using Anthropic ({model}) for cluster naming.")
         namer = AnthropicClusterNamer(anthropic.Anthropic(api_key=anthropic_key))
+    elif openai_key:
+        from src.cluster_naming import OpenAIClusterNamer
+        model = args.model or "gpt-4o-mini"
+        print(f"      Using OpenAI ({model}) for cluster naming.")
+        namer = OpenAIClusterNamer(api_key=openai_key, model=model)
     else:
         from src.cluster_naming import GoogleClusterNamer
         model = args.model or "gemini-1.5-flash"
