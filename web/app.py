@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import os
+import threading
 
 from flask import Flask, jsonify, render_template, request
 from flask_socketio import SocketIO
@@ -14,6 +15,10 @@ _session: dict = {
     "task": None,     # Background task handle or None
     "log_path": "audit_log.jsonl",
 }
+
+# Lock to serialise concurrent /upload requests — prevents two background tasks
+# from racing on _session["state"], the embeddings file, and the audit log.
+_session_lock = threading.Lock()
 
 # ── App and SocketIO init ─────────────────────────────────────────────────────
 # async_mode='threading': safe for numpy/sklearn; no eventlet/gevent monkey-patching (RESEARCH.md)
@@ -46,7 +51,8 @@ def upload_dataset():
     """
     Accepts multipart/form-data with 'file' field (CSV or JSONL).
     Clears existing session state and starts a new conversation loop.
-    D-15: single session per server run.
+    D-15: single session per server run. _session_lock prevents concurrent
+    uploads from racing on shared session state and background task.
     """
     if "file" not in request.files:
         return jsonify({"error": "No file field in request"}), 400
@@ -57,17 +63,18 @@ def upload_dataset():
     records = _parse_upload(content, f.filename)
     assert len(records) >= 2, f"Dataset too small: {len(records)} records (need >= 2)"
 
-    # Reset session state (D-15): clear old state before starting fresh session
-    _session["state"] = None
-    _session["task"] = None
+    with _session_lock:
+        # Reset session state (D-15): clear old state before starting fresh session
+        _session["state"] = None
+        _session["task"] = None
 
-    # Start the background task — heavy lifting (embeddings, clustering, LLM) runs there.
-    # The background task asserts ANTHROPIC_API_KEY internally (fail-loudly boundary).
-    _session["task"] = socketio.start_background_task(
-        _run_conversation_background,
-        records,
-        _session["log_path"],
-    )
+        # Start the background task — heavy lifting (embeddings, clustering, LLM) runs there.
+        # The background task asserts ANTHROPIC_API_KEY internally (fail-loudly boundary).
+        _session["task"] = socketio.start_background_task(
+            _run_conversation_background,
+            records,
+            _session["log_path"],
+        )
     return jsonify({"status": "session_started", "records": len(records)}), 200
 
 
