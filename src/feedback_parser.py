@@ -59,9 +59,10 @@ def _build_delta(item: dict, valid_cluster_ids: set[int]) -> FeedbackDelta:
     Asserts:
     - item["type"] is in VALID_FEEDBACK_TYPES
     - All referenced cluster_ids exist in valid_cluster_ids
+    - merge cluster_a_id != cluster_b_id (self-merge guard)
 
     Raises:
-        AssertionError: unknown type or hallucinated cluster_id
+        AssertionError: unknown type, hallucinated cluster_id, or self-merge
         KeyError: LLM omitted a required field — fail loudly, do not catch
     """
     assert "type" in item and item["type"] in VALID_FEEDBACK_TYPES, (
@@ -79,7 +80,7 @@ def _build_delta(item: dict, valid_cluster_ids: set[int]) -> FeedbackDelta:
         )
         return SplitFeedback(
             cluster_id=item["cluster_id"],
-            seed_item_ids=item["seed_item_ids"],
+            seed_item_ids=tuple(item["seed_item_ids"]),
         )
 
     if feedback_type == "merge":
@@ -88,6 +89,9 @@ def _build_delta(item: dict, valid_cluster_ids: set[int]) -> FeedbackDelta:
         )
         assert item["cluster_b_id"] in valid_cluster_ids, (
             f"parse_feedback: merge cluster_b_id={item['cluster_b_id']} not in current clusters {valid_cluster_ids}"
+        )
+        assert item["cluster_a_id"] != item["cluster_b_id"], (
+            f"parse_feedback: merge cluster_a_id == cluster_b_id == {item['cluster_a_id']}"
         )
         return MergeFeedback(
             cluster_a_id=item["cluster_a_id"],
@@ -152,10 +156,7 @@ def parse_feedback(
             cleaned_text = cleaned_text[4:]
         cleaned_text = cleaned_text.strip()
 
-    try:
-        raw_items = json.loads(cleaned_text)
-    except json.JSONDecodeError:
-        raise  # fail loudly — do not swallow
+    raw_items = json.loads(cleaned_text)
 
     assert isinstance(raw_items, list), (
         f"parse_feedback: LLM returned non-list JSON: {type(raw_items)}"
