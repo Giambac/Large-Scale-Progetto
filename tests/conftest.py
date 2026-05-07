@@ -65,3 +65,61 @@ def mock_embeddings():
     """
     rng = np.random.default_rng(seed=42)
     return rng.random((5, 768)).astype(np.float32)
+
+
+# ──────────────────────────────────────────
+# Phase 2 fixtures
+# ──────────────────────────────────────────
+
+@pytest.fixture
+def tiny_state_3cluster():
+    """
+    A 3-cluster ClusteringState with 6 items.
+    Used by Phase 2 tests for split/merge/move/uncertainty operations.
+    Cluster IDs: 0, 1, 2. Items: 0-5.
+    soft_probs rows sum to 1.0.
+    """
+    from src.state import Cluster, ClusteringState
+    return ClusteringState(
+        turn_index=0,
+        timestamp="2026-05-07T10:00:00",
+        clusters=[
+            Cluster(id=0, name="Alpha", description="Cluster alpha.", item_ids=[0, 1]),
+            Cluster(id=1, name="Beta",  description="Cluster beta.",  item_ids=[2, 3]),
+            Cluster(id=2, name="Gamma", description="Cluster gamma.", item_ids=[4, 5]),
+        ],
+        assignments={0: 0, 1: 0, 2: 1, 3: 1, 4: 2, 5: 2},
+        soft_probs={
+            0: [0.80, 0.10, 0.10],
+            1: [0.70, 0.20, 0.10],
+            2: [0.10, 0.80, 0.10],
+            3: [0.15, 0.70, 0.15],
+            4: [0.05, 0.05, 0.90],
+            5: [0.10, 0.15, 0.75],
+        },
+    )
+
+
+@pytest.fixture
+def mock_embeddings_3cluster():
+    """
+    6 embeddings of dim 768 (float32), deterministic seed=7.
+    Items 0-1 belong to cluster 0, items 2-3 to cluster 1, items 4-5 to cluster 2.
+    Used by f_next_state split path (D-08) tests.
+    """
+    rng = np.random.default_rng(seed=7)
+    return rng.random((6, 768)).astype(np.float32)
+
+
+@pytest.fixture
+def mock_oracle_factory():
+    """
+    Factory for MockOracle with a scripted OracleReply sequence.
+    Usage: mock_oracle_factory([reply1, reply2, ...])
+    After script exhausted, defaults to OracleReply(raw_text='', satisfied=False).
+    Requires src/oracle_protocol.py to exist (will ImportError otherwise).
+    """
+    def _factory(replies):
+        from src.oracle_protocol import MockOracle
+        return MockOracle(script=replies)
+    return _factory
