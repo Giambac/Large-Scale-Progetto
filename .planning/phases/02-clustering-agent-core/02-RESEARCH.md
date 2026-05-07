@@ -745,7 +745,7 @@ def upload_dataset():
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **f_uncertainty: should merge candidates use soft_probs centroid distance or embedding space distance?**
    - What we know: `f_uncertainty` is a pure function that takes only `ClusteringState` — it does not receive `EmbeddingStore`

@@ -1,7 +1,7 @@
 # Project State: Conversational Clustering
 
-**Last updated:** 2026-05-05
-**Updated by:** /gsd-verify-work 1
+**Last updated:** 2026-05-07
+**Updated by:** /gsd-plan-phase 2
 
 ---
 
@@ -17,8 +17,8 @@
 
 **Milestone:** v1
 **Current phase:** 2 — Clustering Agent Core
-**Current plan:** Not started
-**Status:** Phase 1 complete — Phase 2 ready to plan
+**Current plan:** Ready to execute (5 plans)
+**Status:** Phase 2 planned — Ready to execute
 
 **Progress:**
 ```
@@ -51,8 +51,8 @@ Phase 6 [          ] 0%   Generalization and Human Validation
 
 | Decision | Rationale | Status |
 |----------|-----------|--------|
-| LangGraph vs. plain Python for orchestrator | LangGraph adds HITL checkpointing; plain Python is simpler for fixed sequential graph. ARCHITECTURE.md recommends plain Python. | Unresolved — decide before Phase 2 |
-| sklearn HDBSCAN `probabilities_` vs. standalone `hdbscan` full multinomial vectors | Determines SoftAssignment data structure and `f_uncertainty` computation; cascading if retrofitted | Unresolved — decide at Phase 1 gate |
+| LangGraph vs. plain Python for orchestrator | LangGraph adds HITL checkpointing; plain Python is simpler for fixed sequential graph. ARCHITECTURE.md recommends plain Python. | **Resolved (Phase 2): plain Python while-loop** |
+| sklearn HDBSCAN `probabilities_` vs. standalone `hdbscan` full multinomial vectors | Determines SoftAssignment data structure and `f_uncertainty` computation; cascading if retrofitted | **Resolved (Phase 1): standalone `hdbscan` 0.8.42** |
 | Primary dataset (Amazon Reviews 2023, IMDB, or support tickets) | Held-out split must be locked before any code runs | Unresolved — decide at Phase 0/Phase 1 |
 | Oracle cognitive-load weight parameters | Cognitive load is both a design constraint and primary metric; wrong weights produce broken metric | Unresolved — decide at Phase 3 |
 | "Oracle satisfaction" operationalization for stopping signal | Must not be circular (oracle both gives feedback and decides when to stop) | Unresolved — must be decided in Phase 1 (PRE-02) |
