@@ -2,7 +2,7 @@
 
 ## What This Is
 
-An AI research system that clusters a text dataset by conversing with a human oracle — proposing groupings, explaining them, and refining them through dialogue. The oracle is the sole judge of quality, making this a study of how an AI can efficiently converge to a subjectively acceptable clustering under a tight cognitive-load budget, with no intrinsic ground truth.
+An AI research system that clusters any textual dataset by conversing with a human oracle — proposing groupings, explaining them, and refining them through dialogue. The system is dataset-agnostic: it accepts any text corpus (support tickets, reviews, articles, etc.) without modification. The oracle is the sole judge of quality, making this a study of how an AI can efficiently converge to a subjectively acceptable clustering under a tight cognitive-load budget, with no intrinsic ground truth.
 
 ## Core Value
 
@@ -27,12 +27,19 @@ The interaction loop converges toward oracle-accepted clusterings efficiently, w
 - [ ] Produce at least one defensible quantified claim with a confidence interval
 - [ ] Enable generalization: codify oracle preferences into a function for new items
 
-### Out of Scope
+### Out of Scope (v1)
 
-- Web UI / dataset upload / persistent sessions — solo/pair scope is CLI or notebook
-- Multiple clustering backends (k-means / HDBSCAN / LLM-first) — start with one representation
-- UMAP/t-SNE visualization — deferred to trio/quartet scope tier
-- Full N×M human oracle study — requires larger team; solo scope uses LLM oracles + small human validation
+- Automatic K optimization (silhouette, BIC) — anti-feature; K changes only through oracle intent
+- Showing raw model internals to oracle — increases cognitive load without proportional gain
+
+### Trio/Quartet Scope (v2)
+
+Features deferred until team grows to 3–4 or v1 is complete:
+
+- **UMAP/t-SNE visualization** — 2D embedding projection in the web UI (VIZ-V2-01)
+- **Multiple clustering backends** — k-means, LLM-first alongside HDBSCAN (BACK-V2-01)
+- **Persistent sessions** — save and resume state across server restarts (UI-V2-01)
+- **Full N×M headline experiment** — N oracles × M tasks, LLM oracles for scale + human oracles (N ≥ 10, within-subject), comparing conversational interface vs. default-parameter baseline on oracle satisfaction, turns-to-convergence, and generalization accuracy (EXP-V2-01)
 
 ## Context
 
@@ -45,7 +52,7 @@ This is an academic AI systems project (Large-Scale semester 2). The system mode
 
 A 4th agent for synthetic data generation is acknowledged but deferred. Each agent starts as a naïve LLM prompt and is sharpened where bottlenecks emerge.
 
-**Dataset:** Text datasets (support tickets, product reviews, news articles). Target: 3–10 top-level clusters, non-trivial conversation possible. Candidates: IMDB movies, Amazon Reviews 2023, or small internal text dump. Keep a frozen held-out subset for generalization evaluation.
+**Dataset:** The system is dataset-agnostic and must work on any text corpus without modification. Example domains: support tickets, product reviews, news articles, IMDB movies, Amazon Reviews 2023. Target: 3–10 top-level clusters, non-trivial conversation possible. For each dataset used in experiments, a frozen held-out split is locked before any experiment runs on that dataset.
 
 **Evaluation approach (no ground truth):** Combine oracle satisfaction, turns to convergence, cognitive load per turn, contradiction/drift tracking, pairwise validation, soft-assignment calibration, and generalization performance. LLM-simulated oracles for scale; human study (N ≈ 5–10) for validation.
 
@@ -55,7 +62,7 @@ A 4th agent for synthetic data generation is acknowledged but deferred. Each age
 
 ## Constraints
 
-- **Scope**: Solo/pair tier — CLI or notebook interface; single dataset; one embedding representation
+- **Scope**: Solo/pair tier — CLI or notebook interface; dataset-agnostic (any text corpus via upload or CLI); one embedding representation
 - **Research integrity**: All headline quantitative claims must include confidence intervals; human study requires consented, within-subject protocol
 - **Fail loudly**: Code must crash on unexpected state — no silent failures, no defensive `if/else` chains, no swallowed exceptions. An assertion error or uncaught exception is always preferable to continuing with bad state. Error handling is only permitted at system boundaries (CLI entry point, API calls). Everywhere else: let it crash.
 - **Cognitive load**: Must be budgeted from turn one, not discovered at study time

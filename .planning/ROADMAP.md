@@ -29,12 +29,19 @@
   2. The three stopping conditions (turn budget, state-change diminishing returns, explicit oracle satisfaction token) are written as code-ready specifications, not prose
   3. Running the pipeline on the selected dataset produces a `ClusteringState` with HDBSCAN cluster labels, LLM-generated names/descriptions, and per-point soft assignment probability distributions
   4. Any turn's `ClusteringState` can be serialized to JSONL and deserialized back without data loss
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Wave 0: test scaffold (pytest + 6 test stub files + shared fixtures)
+- [ ] 01-02-PLAN.md — Wave 1: data_loader.py (PRE-01: download, split, hash) + stopping.py (PRE-02: typed criteria spec)
+- [ ] 01-03-PLAN.md — Wave 2: embedding_store.py (FOUND-01: all-mpnet-base-v2, embeddings.npy)
+- [ ] 01-04-PLAN.md — Wave 3: state.py + clustering.py + cluster_naming.py (FOUND-02, FOUND-03)
+- [ ] 01-05-PLAN.md — Wave 4: serialization.py + setup_phase1.py end-to-end script (FOUND-04)
 
 ### Phase 2: Clustering Agent Core
 **Goal**: The Clustering Agent's pure functions operate correctly on real state and the full range of oracle feedback types is parsed and applied
 **Depends on**: Phase 1
-**Requirements**: CLUS-01, CLUS-02, CLUS-03, CLUS-04, FB-01, FB-02, FB-03, HIER-01, HIER-02, UI-01
+**Requirements**: CLUS-01, CLUS-02, CLUS-03, CLUS-04, FB-01, FB-02, FB-03, HIER-01, HIER-02, UI-01, UI-02
 **Success Criteria** (what must be TRUE):
   1. `f_output` always returns a complete clustering assignment with no partial states, even mid-conversation
   2. `f_uncertainty` produces a ranked list of high-entropy boundary points, split candidates, and merge candidates derived from calibrated soft assignments
@@ -94,7 +101,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Pre-Code Obligations and Foundation | 0/? | Not started | - |
+| 1. Pre-Code Obligations and Foundation | 0/5 | Planned | - |
 | 2. Clustering Agent Core | 0/? | Not started | - |
 | 3. Oracle Agent | 0/? | Not started | - |
 | 4. Judge Agent | 0/? | Not started | - |
@@ -123,6 +130,7 @@
 | HIER-01 | Phase 2 | Hierarchy |
 | HIER-02 | Phase 2 | Hierarchy |
 | UI-01 | Phase 2 | Debug UI |
+| UI-02 | Phase 2 | Debug UI |
 | ORC-01 | Phase 3 | Oracle Agent |
 | ORC-02 | Phase 3 | Oracle Agent |
 | ORC-03 | Phase 3 | Oracle Agent |
@@ -140,11 +148,12 @@
 | GEN-01 | Phase 6 | Generalization |
 | GEN-02 | Phase 6 | Generalization |
 
-**Total v1 requirements:** 32
-**Mapped:** 32
+**Total v1 requirements:** 33
+**Mapped:** 33
 **Unmapped:** 0
 
 ---
 
 *Roadmap created: 2026-04-29*
 *Last updated: 2026-04-30 — added DB-01/02/03 (experiments/turns/oracle_feedback tables) to Phase 4*
+*Last updated: 2026-05-05 — Phase 1 planned: 5 plans, 4 waves*
