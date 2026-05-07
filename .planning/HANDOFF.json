@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-05-07",
+  "phase": "2",
+  "phase_name": "Clustering Agent Core",
+  "phase_dir": ".planning/phases/02-clustering-agent-core",
+  "plan": 0,
+  "task": 0,
+  "total_tasks": 12,
+  "status": "paused",
+  "completed_tasks": [],
+  "remaining_tasks": [
+    {"id": 1, "name": "02-01: test scaffold", "status": "not_started"},
+    {"id": 2, "name": "02-02: feedback.py + feedback_parser.py", "status": "not_started"},
+    {"id": 3, "name": "02-03: hierarchy + uncertainty + oracle_protocol + strategy", "status": "not_started"},
+    {"id": 4, "name": "02-04 T1: f_output + f_next_best_step + move_item", "status": "not_started"},
+    {"id": 5, "name": "02-04 T2: _apply_split + _apply_merge", "status": "not_started"},
+    {"id": 6, "name": "02-04 T3: conversation_loop.py", "status": "not_started"},
+    {"id": 7, "name": "02-05: Flask + SocketIO web UI", "status": "not_started"}
+  ],
+  "blockers": [],
+  "human_actions_pending": [
+    {"action": "pip install flask flask-socketio", "context": "Not yet installed — required before Wave 4 executes", "blocking": false}
+  ],
+  "decisions": [
+    {"decision": "GlobalFeedback accumulates in global_instructions list owned by conversation_loop", "rationale": "ClusteringState schema is frozen; accumulator lives outside state", "phase": "2"},
+    {"decision": "soft_probs encoded as dict-of-dicts in SocketIO payload {str(item_id): {str(cluster_id): prob}}", "rationale": "Positional list encoding breaks after split/merge when cluster IDs become non-contiguous", "phase": "2"},
+    {"decision": "Flask-SocketIO async_mode='threading' with socketio.emit() (not module emit)", "rationale": "Safe with numpy/sklearn; eventlet/gevent break numpy", "phase": "2"}
+  ],
+  "uncommitted_files": [],
+  "next_action": "/clear then /gsd-execute-phase 2",
+  "context_notes": "Phase 2 planning complete. 5 plans in 5 waves, all verified. Plans committed at 0776cb4. Ready to execute."
+}
