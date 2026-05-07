@@ -94,6 +94,11 @@ def _apply_move_item(
     )
 
     source_cluster_id = state.assignments[feedback.item_id]
+
+    # No-op guard: LLM may suggest moving an item to its current cluster — return state unchanged.
+    if source_cluster_id == feedback.target_cluster_id:
+        return state  # already in target cluster — nothing to do
+
     target_idx = id_to_idx[feedback.target_cluster_id]
 
     # Copy probs for this item
@@ -210,15 +215,21 @@ def _apply_split(
     # Gather embeddings for items in the target cluster
     sub_embeddings = np.array([store.get(item_id) for item_id in target.item_ids])
 
-    # K-means with optional oracle seed centroids
+    # K-means with optional oracle seed centroids (WR-02: validate seed membership first)
     if delta.seed_item_ids:
+        target_item_set = set(target.item_ids)
+        for sid in delta.seed_item_ids[:2]:
+            assert sid in target_item_set, (
+                f"_apply_split: seed_item_id {sid} is not in cluster {delta.cluster_id} "
+                f"(items: {target.item_ids})"
+            )
+
+    if delta.seed_item_ids and len(delta.seed_item_ids) >= 2:
         seed_embeddings = np.array([store.get(sid) for sid in delta.seed_item_ids[:2]])
-        # Pad or truncate to exactly 2 centroids
-        if len(seed_embeddings) == 1:
-            seed_embeddings = np.vstack([seed_embeddings, seed_embeddings])
         centroids = seed_embeddings[:2]
         km = KMeans(n_clusters=2, init=centroids, n_init=1, random_state=0)
     else:
+        # 0 or 1 seeds — fall back to k-means++ (avoids identical centroid degenerate case)
         km = KMeans(n_clusters=2, init="k-means++", n_init=10, random_state=0)
 
     km.fit(sub_embeddings)
@@ -356,6 +367,10 @@ def _apply_merge(
     )
     assert delta.cluster_b_id in id_to_idx, (
         f"_apply_merge: cluster_b_id {delta.cluster_b_id} not found in state"
+    )
+    assert delta.cluster_a_id != delta.cluster_b_id, (
+        f"_apply_merge: cluster_a_id and cluster_b_id are identical ({delta.cluster_a_id}) "
+        "— cannot merge a cluster with itself"
     )
 
     a_idx = id_to_idx[delta.cluster_a_id]
