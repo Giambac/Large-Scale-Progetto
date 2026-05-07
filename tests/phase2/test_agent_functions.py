@@ -171,9 +171,24 @@ def test_move_item_soft_probs_sum_to_one(tiny_state_3cluster, mock_embeddings_3c
 
 # ── f_next_state — GlobalFeedback accumulation (FB-01) ───────────────
 
-def test_global_feedback_accumulates():
+def test_global_feedback_accumulates(tiny_state_3cluster, mock_embeddings_3cluster):
     """FB-01: two GlobalFeedback deltas → global_instructions list grows to len 2."""
-    raise NotImplementedError
+    from src.agent_functions import f_next_state
+    from src.feedback import GlobalFeedback
+    from src.embedding_store import EmbeddingStore
+    from unittest.mock import MagicMock
+    store = EmbeddingStore(mock_embeddings_3cluster)
+    namer = MagicMock()
+    namer.name_cluster.return_value = {"name": "X", "description": "X."}
+    global_instructions: list[str] = []
+    deltas = [
+        GlobalFeedback(instruction_text="Focus on sentiment."),
+        GlobalFeedback(instruction_text="Separate by topic."),
+    ]
+    f_next_state(tiny_state_3cluster, deltas, store, namer, global_instructions=global_instructions)
+    assert len(global_instructions) == 2
+    assert global_instructions[0] == "Focus on sentiment."
+    assert global_instructions[1] == "Separate by topic."
 
 
 # ── f_next_state — type priority order (FB-01) ────────────────────────
