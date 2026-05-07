@@ -49,7 +49,14 @@ Plans:
   4. `f_next_state` applies global, cluster-level, and point-level oracle feedback and updates clustering state so that latest oracle intent wins on any contradiction
   5. The cluster hierarchy is navigable and grows incrementally as oracle feedback arrives — not pre-computed in one shot
   6. A web-based debug UI is accessible during a running session, showing current cluster assignments with soft probabilities, turn-by-turn conversation history, and per-turn metrics (cognitive-load, contradiction count, convergence signal)
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Wave 0: test scaffold (Phase 2 test stubs + conftest.py Phase 2 fixtures)
+- [ ] 02-02-PLAN.md — Wave 1: src/feedback.py (FeedbackDelta union + 5 frozen dataclasses) + src/feedback_parser.py (parse_feedback LLM call)
+- [ ] 02-03-PLAN.md — Wave 2: src/hierarchy.py (HierarchyStore) + src/uncertainty.py (f_uncertainty) + src/oracle_protocol.py (MockOracle) + src/strategy.py (RandomStrategy)
+- [ ] 02-04-PLAN.md — Wave 3: src/agent_functions.py (f_output, f_next_best_step, f_next_state) + src/conversation_loop.py (30-turn orchestrator)
+- [ ] 02-05-PLAN.md — Wave 4: web/app.py (Flask + SocketIO debug UI) + web/templates/ + web/static/
 
 ### Phase 3: Oracle Agent
 **Goal**: The LLM-simulated oracle behaves as a configurable, realistic stand-in for a human — with noise, cognitive fatigue, and preference drift
@@ -102,7 +109,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Pre-Code Obligations and Foundation | 0/5 | Planned | - |
-| 2. Clustering Agent Core | 0/? | Not started | - |
+| 2. Clustering Agent Core | 0/5 | Planned | - |
 | 3. Oracle Agent | 0/? | Not started | - |
 | 4. Judge Agent | 0/? | Not started | - |
 | 5. Ablation Harness and Strategies | 0/? | Not started | - |
@@ -157,3 +164,4 @@ Plans:
 *Roadmap created: 2026-04-29*
 *Last updated: 2026-04-30 — added DB-01/02/03 (experiments/turns/oracle_feedback tables) to Phase 4*
 *Last updated: 2026-05-05 — Phase 1 planned: 5 plans, 4 waves*
+*Last updated: 2026-05-07 — Phase 2 planned: 5 plans, 5 waves (Wave 0 through Wave 4)*
