@@ -55,7 +55,7 @@ Plans:
 - [x] 02-01-PLAN.md — Wave 0: test scaffold (Phase 2 test stubs + conftest.py Phase 2 fixtures)
 - [x] 02-02-PLAN.md — Wave 1: src/feedback.py (FeedbackDelta union + 5 frozen dataclasses) + src/feedback_parser.py (parse_feedback LLM call)
 - [x] 02-03-PLAN.md — Wave 2: src/hierarchy.py (HierarchyStore) + src/uncertainty.py (f_uncertainty) + src/oracle_protocol.py (MockOracle) + src/strategy.py (RandomStrategy)
-- [ ] 02-04-PLAN.md — Wave 3: src/agent_functions.py (f_output, f_next_best_step, f_next_state) + src/conversation_loop.py (30-turn orchestrator)
+- [x] 02-04-PLAN.md — Wave 3: src/agent_functions.py (f_output, f_next_best_step, f_next_state) + src/conversation_loop.py (30-turn orchestrator)
 - [ ] 02-05-PLAN.md — Wave 4: web/app.py (Flask + SocketIO debug UI) + web/templates/ + web/static/
 
 ### Phase 3: Oracle Agent
@@ -109,7 +109,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Pre-Code Obligations and Foundation | 0/5 | Planned | - |
-| 2. Clustering Agent Core | 3/5 | In Progress | - |
+| 2. Clustering Agent Core | 4/5 | In Progress | - |
 | 3. Oracle Agent | 0/? | Not started | - |
 | 4. Judge Agent | 0/? | Not started | - |
 | 5. Ablation Harness and Strategies | 0/? | Not started | - |
