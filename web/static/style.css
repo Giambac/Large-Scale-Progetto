@@ -1,0 +1,103 @@
+/* style.css — Clustering Agent Debug UI */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+    font-family: system-ui, sans-serif;
+    margin: 0;
+    padding: 0;
+    background: #f5f5f5;
+    color: #222;
+}
+
+header {
+    background: #1a1a2e;
+    color: #eee;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+header h1 { margin: 0; font-size: 1.1rem; }
+
+#status-banner {
+    background: #222;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+
+.layout {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 16px;
+    padding: 16px;
+    min-height: calc(100vh - 60px);
+}
+
+/* Cluster cards grid */
+.cluster-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+    align-content: start;
+}
+
+.cluster-card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.08);
+}
+
+.cluster-card h3 {
+    margin: 0 0 6px;
+    font-size: 0.95rem;
+    color: #1a1a2e;
+}
+
+.cluster-card p { margin: 4px 0; font-size: 0.82rem; color: #555; }
+
+.item-list { padding: 0; margin: 6px 0 0; list-style: none; }
+.item-list li { font-size: 0.78rem; padding: 2px 0; display: flex; align-items: center; gap: 6px; }
+
+.prob-bar {
+    display: inline-block;
+    height: 8px;
+    background: #4a90d9;
+    border-radius: 2px;
+    min-width: 2px;
+}
+
+/* Metrics sidebar */
+#metrics-sidebar {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 12px;
+    font-size: 0.85rem;
+    height: fit-content;
+    position: sticky;
+    top: 16px;
+}
+
+#metrics-sidebar h2 { font-size: 0.9rem; margin: 0 0 8px; color: #1a1a2e; }
+#history-list { padding: 0; margin: 0; list-style: none; max-height: 400px; overflow-y: auto; }
+#history-list li { padding: 3px 0; border-bottom: 1px solid #eee; font-size: 0.78rem; }
+
+.placeholder { color: #999; font-size: 0.85rem; }
+
+/* Upload form */
+#upload-form { display: flex; gap: 8px; align-items: center; }
+#upload-form button {
+    background: #4a90d9;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+#upload-form button:hover { background: #3a7bc8; }
