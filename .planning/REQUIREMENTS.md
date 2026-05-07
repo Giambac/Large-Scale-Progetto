@@ -19,10 +19,10 @@
 
 ### Clustering Agent
 
-- [ ] **CLUS-01**: `f_output` always returns a complete clustering assignment (anytime behavior — no partial states)
-- [ ] **CLUS-02**: `f_uncertainty` identifies boundary points, ambiguous assignments, and low-confidence clusters
-- [ ] **CLUS-03**: `f_next_best_step` selects the next action (show full clustering / show subset / ask targeted question / stop) via a pluggable Strategy interface
-- [ ] **CLUS-04**: `f_next_state` applies oracle feedback to update clustering state; latest oracle intent wins on contradictions
+- [x] **CLUS-01**: `f_output` always returns a complete clustering assignment (anytime behavior — no partial states)
+- [x] **CLUS-02**: `f_uncertainty` identifies boundary points, ambiguous assignments, and low-confidence clusters
+- [x] **CLUS-03**: `f_next_best_step` selects the next action (show full clustering / show subset / ask targeted question / stop) via a pluggable Strategy interface
+- [x] **CLUS-04**: `f_next_state` applies oracle feedback to update clustering state; latest oracle intent wins on contradictions
 
 ### Oracle Agent
 
@@ -39,15 +39,15 @@
 
 ### Feedback Types
 
-- [ ] **FB-01**: System accepts and acts on global oracle feedback ("too many clusters", "focus on billing complaints")
-- [ ] **FB-02**: System accepts and acts on cluster-level oracle feedback ("split this cluster", "merge A and B", "A is too large")
-- [ ] **FB-03**: System accepts and acts on point-level oracle feedback ("x belongs in B", "x and y should be together")
+- [x] **FB-01**: System accepts and acts on global oracle feedback ("too many clusters", "focus on billing complaints")
+- [x] **FB-02**: System accepts and acts on cluster-level oracle feedback ("split this cluster", "merge A and B", "A is too large")
+- [x] **FB-03**: System accepts and acts on point-level oracle feedback ("x belongs in B", "x and y should be together")
 - [ ] **FB-04**: System accepts and acts on instructional oracle feedback ("treat 'error' and 'fail' as synonyms", "pay more attention to feature F") via LLM parsing into structured constraints
 
 ### Hierarchy
 
-- [ ] **HIER-01**: System maintains a cluster hierarchy that the oracle can drill into or zoom out of
-- [ ] **HIER-02**: Hierarchy is grown incrementally as the oracle refines (not computed in one shot upfront)
+- [x] **HIER-01**: System maintains a cluster hierarchy that the oracle can drill into or zoom out of
+- [x] **HIER-02**: Hierarchy is grown incrementally as the oracle refines (not computed in one shot upfront)
 
 ### Database
 
@@ -57,8 +57,8 @@
 
 ### Debug UI
 
-- [ ] **UI-01**: A web-based debug interface displays current clustering state (cluster names, assignments, soft probabilities), conversation history (turn-by-turn oracle feedback and system replies), and per-turn metrics (cognitive-load score, contradiction count, convergence signal) — intended for developer debugging, not end-user interaction
-- [ ] **UI-02**: The web UI allows uploading a dataset file (e.g. CSV or JSONL) to start a new session on a different dataset without restarting from the CLI
+- [x] **UI-01**: A web-based debug interface displays current clustering state (cluster names, assignments, soft probabilities), conversation history (turn-by-turn oracle feedback and system replies), and per-turn metrics (cognitive-load score, contradiction count, convergence signal) — intended for developer debugging, not end-user interaction
+- [x] **UI-02**: The web UI allows uploading a dataset file (e.g. CSV or JSONL) to start a new session on a different dataset without restarting from the CLI
 
 ### Ablation & Evaluation
 

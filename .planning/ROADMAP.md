@@ -10,7 +10,7 @@
 ## Phases
 
 - [ ] **Phase 1: Pre-Code Obligations and Foundation** - Lock held-out data, operationalize stopping criteria, build embedding infrastructure and initial clustering
-- [ ] **Phase 2: Clustering Agent Core** - Implement all `f_*` functions, feedback types, and hierarchy
+- [x] **Phase 2: Clustering Agent Core** - Implement all `f_*` functions, feedback types, and hierarchy
 - [ ] **Phase 3: Oracle Agent** - Build LLM-simulated oracle with noise parameters, cognitive-load modeling, and drift detection
 - [ ] **Phase 4: Judge Agent** - Implement convergence detection, per-turn metrics, and no-dialogue baseline
 - [ ] **Phase 5: Ablation Harness and Strategies** - Add non-random strategies, multi-run experiment runner, and bootstrap confidence intervals
