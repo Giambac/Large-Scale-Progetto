@@ -17,13 +17,13 @@
 
 **Milestone:** v1
 **Current phase:** 2 — Clustering Agent Core
-**Current plan:** Wave 1 complete — Ready for Wave 2 (02-03)
-**Status:** Phase 2 in progress — 2/5 plans done
+**Current plan:** Wave 2 complete — Ready for Wave 3 (02-04)
+**Status:** Phase 2 in progress — 3/5 plans done
 
 **Progress:**
 ```
 Phase 1 [##########] 100% Pre-Code Obligations and Foundation ✓
-Phase 2 [####      ] 40%  Clustering Agent Core (2/5 plans done)
+Phase 2 [######    ] 60%  Clustering Agent Core (3/5 plans done)
 Phase 3 [          ] 0%   Oracle Agent
 Phase 4 [          ] 0%   Judge Agent
 Phase 5 [          ] 0%   Ablation Harness and Strategies
