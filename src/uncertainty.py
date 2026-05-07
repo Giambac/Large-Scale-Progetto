@@ -65,6 +65,10 @@ def f_uncertainty(state: ClusteringState) -> UncertaintyReport:
     # Step 5: merge_candidates — cluster pairs ranked by soft_probs centroid euclidean distance
     cluster_centroids: dict[int, np.ndarray] = {}
     for cluster in state.clusters:
+        assert len(cluster.item_ids) > 0, (
+            f"f_uncertainty: cluster {cluster.id} has no items — "
+            "empty clusters must be removed before f_uncertainty is called"
+        )
         vecs = np.array([state.soft_probs[i] for i in cluster.item_ids])
         cluster_centroids[cluster.id] = vecs.mean(axis=0)
 
