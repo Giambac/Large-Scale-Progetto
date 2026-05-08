@@ -1,40 +1,44 @@
 {
   "version": "1.0",
-  "timestamp": "2026-05-07T20:30:06Z",
-  "phase": "2",
+  "timestamp": "2026-05-08T11:42:31Z",
+  "phase": "02",
   "phase_name": "Clustering Agent Core",
   "phase_dir": ".planning/phases/02-clustering-agent-core",
-  "plan": 5,
-  "task": 0,
-  "total_tasks": 0,
+  "plan": null,
+  "task": null,
+  "total_tasks": null,
   "status": "paused",
   "completed_tasks": [
-    {"id": 1, "name": "Wave 4 — Flask+SocketIO debug UI (02-05)", "status": "done", "commit": "70bdb0e"},
-    {"id": 2, "name": "Code review — 4 critical + 4 warning findings identified", "status": "done", "commit": "1a82f4d"},
-    {"id": 3, "name": "Fix CR-01..CR-04 + WR-01..WR-04 (state corruption + immutability + locking)", "status": "done", "commit": "95c8dd0"},
-    {"id": 4, "name": "Phase 2 verification — 10/11 verified, 1 deferred to Phase 4", "status": "done", "commit": "7d30bd0"},
-    {"id": 5, "name": "Phase 2 completion — ROADMAP, STATE, REQUIREMENTS, VERIFICATION marked complete", "status": "done", "commit": "826e0e5"}
+    {"id": 1, "name": "Wave 0–4: all 5 plans executed (v1 requirements)", "status": "done", "commit": "bb943c8"},
+    {"id": 2, "name": "Code review + 8 bugs fixed", "status": "done", "commit": "95c8dd0"},
+    {"id": 3, "name": "Phase 2 verification — 10/11 verified, 1 deferred to Phase 4", "status": "done", "commit": "7d30bd0"},
+    {"id": 4, "name": "ROADMAP.md replaced with Trio roadmap (ROADMAP Updated.md)", "status": "done", "commit": "uncommitted"},
+    {"id": 5, "name": "Phase 2 v1 requirements marked complete in ROADMAP; Trio reqs added as pending", "status": "done", "commit": "uncommitted"}
   ],
-  "remaining_tasks": [],
+  "remaining_tasks": [
+    {"id": 6, "name": "Discuss Phase 2 Trio reqs (BACK-V2-01, VIZ-V2-01, UI-V2-01)", "status": "not_started"},
+    {"id": 7, "name": "Plan Phase 2 Trio reqs", "status": "not_started"},
+    {"id": 8, "name": "Execute Phase 2 Trio reqs", "status": "not_started"}
+  ],
   "blockers": [],
   "human_actions_pending": [
     {
       "action": "Visual UI test: run `python web/app.py`, upload a CSV to http://localhost:5000, confirm cluster cards + sidebar render (ANTHROPIC_API_KEY must be set)",
-      "context": "Skipped during verification session. Non-blocking — Phase 3 can proceed.",
-      "blocking": false
-    },
-    {
-      "action": "Read 'ROADMAP Updated.md' in project root — opened during session, may contain updated Trio-tier scope (multiple backends in Phase 2, extended Oracle Agent) that diverges from .planning/ROADMAP.md. Consider /gsd-ingest-docs before Phase 3 planning.",
-      "context": "File not read by orchestrator. May affect Phase 3 requirements.",
+      "context": "Skipped during verification session. Non-blocking — can be done anytime.",
       "blocking": false
     }
   ],
   "decisions": [
-    {"decision": "Accept Phase 2 without contradiction count/convergence signal in web UI", "rationale": "Deferred to Phase 4 (JUDG-02). Verifier marked as DEFERRED not GAP.", "phase": "2"},
-    {"decision": "soft_probs as dict-of-dicts {str(item_id): {str(cluster_id): prob}} in SocketIO payload", "rationale": "Positional list breaks after split/merge with non-contiguous cluster IDs", "phase": "2"},
-    {"decision": "_apply_move_item: early return (not assert) on source==target", "rationale": "LLM may emit no-op move; graceful handling preferred over crash", "phase": "2"}
+    {"decision": "Replace .planning/ROADMAP.md with Trio roadmap (ROADMAP Updated.md)", "rationale": "Trio roadmap adds BACK-V2-01, VIZ-V2-01, UI-V2-01 to Phase 2 and enriches Phases 3-6 with research-question context and human study requirements", "phase": "02"},
+    {"decision": "Phase 2 Trio requirements need a fresh discuss→plan→execute cycle", "rationale": "These are new scope items (k-means backend, UMAP visualization, persistent sessions) not covered by the original Phase 2 execution. The v1 work is done and verified.", "phase": "02"},
+    {"decision": "Accept Phase 2 without contradiction count/convergence signal in web UI", "rationale": "Deferred to Phase 4 (JUDG-02). Verifier marked as DEFERRED not GAP.", "phase": "02"},
+    {"decision": "soft_probs as dict-of-dicts {str(item_id): {str(cluster_id): prob}} in SocketIO payload", "rationale": "Positional list breaks after split/merge with non-contiguous cluster IDs", "phase": "02"},
+    {"decision": "_apply_move_item: early return (not assert) on source==target", "rationale": "LLM may emit no-op move; graceful handling preferred over crash", "phase": "02"}
   ],
-  "uncommitted_files": [],
-  "next_action": "Check 'ROADMAP Updated.md' for scope changes, then /gsd-discuss-phase 3 to start Oracle Agent",
-  "context_notes": "Phase 2 is 100% complete: 5/5 plans, 65 tests green, 8 bugs fixed, verification passed. The 'ROADMAP Updated.md' in the repo root was opened by the user during the session and likely contains updated Trio-tier requirements. Worth ingesting before Phase 3 discuss/plan."
+  "uncommitted_files": [
+    ".planning/ROADMAP.md",
+    ".planning/phases/02-clustering-agent-core/02-UAT.md"
+  ],
+  "next_action": "Run /gsd-discuss-phase for Phase 2 scoped to the three Trio requirements: BACK-V2-01 (k-means backend alongside HDBSCAN), VIZ-V2-01 (UMAP/t-SNE 2D projection in web UI), UI-V2-01 (persistent sessions saved to disk and resumable)",
+  "context_notes": "Phase 2 v1 work is 100% complete and verified (5/5 plans, 65 tests green, verification passed 2026-05-07). The Trio requirements are genuinely new scope added by the updated Trio-tier roadmap. They need their own discuss→plan→execute cycle targeting the existing codebase. Key existing files: src/clustering.py (HDBSCAN), src/state.py (ClusteringState), web/app.py (Flask+SocketIO), web/templates/index.html, web/static/main.js."
 }
