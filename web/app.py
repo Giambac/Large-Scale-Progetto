@@ -1,12 +1,40 @@
 """web/app.py — Flask + Flask-SocketIO debug UI server (D-13, D-14, D-15)."""
 from __future__ import annotations
 
+import argparse
 import io
+import json as _json
 import os
+import sys
 import threading
 
 from flask import Flask, jsonify, render_template, request
 from flask_socketio import SocketIO
+
+
+def _parse_args() -> argparse.Namespace:
+    """
+    Parse CLI arguments for web/app.py.
+    Called once at module load time.
+    D-18: --backend hdbscan|kmeans. Default hdbscan. Unknown value asserts loudly.
+    """
+    parser = argparse.ArgumentParser(description="Clustering Agent Debug UI")
+    parser.add_argument(
+        "--backend",
+        choices=["hdbscan", "kmeans"],
+        default="hdbscan",
+        help="Clustering backend to use (default: hdbscan)",
+    )
+    # parse_known_args so Flask/SocketIO can pass their own args without conflict
+    args, _ = parser.parse_known_args()
+    assert args.backend in ("hdbscan", "kmeans"), (
+        f"Unknown --backend value: {args.backend!r}. Must be 'hdbscan' or 'kmeans'."
+    )
+    return args
+
+
+_args = _parse_args()
+_backend_name: str = _args.backend
 
 # ── Module-level session state (single session per server run, D-15) ─────────
 # Cleared on each POST /upload so the old session is discarded.
@@ -97,7 +125,7 @@ def _run_conversation_background(records: list[dict], log_path: str) -> None:
     import numpy as np
 
     from src.cluster_naming import AnthropicClusterNamer
-    from src.clustering import build_initial_clustering_state
+    from src.clustering import HDBSCANBackend, KMeansBackend, build_initial_clustering_state
     from src.conversation_loop import run_conversation
     from src.embedding_store import EmbeddingStore
     from src.oracle_protocol import MockOracle, OracleReply
@@ -112,8 +140,43 @@ def _run_conversation_background(records: list[dict], log_path: str) -> None:
     texts = [r["text"] for r in records]
     os.makedirs("embeddings", exist_ok=True)
     store = EmbeddingStore.compute_and_save(texts, "embeddings/session_embeddings.npy")
-    initial_state = build_initial_clustering_state(store.get_all(), records, namer)
+
+    # D-18: instantiate the backend selected via --backend CLI flag
+    if _backend_name == "kmeans":
+        backend = KMeansBackend()
+        # backend._k is set during build_initial_clustering_state via backend.fit()
+    elif _backend_name == "hdbscan":
+        backend = HDBSCANBackend()
+    else:
+        assert False, f"Unknown backend: {_backend_name!r}"
+
+    initial_state = build_initial_clustering_state(
+        store.get_all(), records, namer, backend=backend
+    )
     _session["state"] = initial_state
+
+    # D-17: log chosen K to audit_log.jsonl as backend_init event so runs are reproducible
+    if _backend_name == "kmeans":
+        _k_chosen = backend.k
+        _backend_init_event = {
+            "event": "backend_init",
+            "backend": "kmeans",
+            "k": _k_chosen,
+            "turn": 0,
+        }
+        with open(log_path, "a", encoding="utf-8") as _f:
+            _f.write(_json.dumps(_backend_init_event) + "\n")
+        print(f"[startup] KMeansBackend: K={_k_chosen} (selected via BIC on GMM)")
+    else:
+        _backend_init_event = {
+            "event": "backend_init",
+            "backend": "hdbscan",
+            "k": len(initial_state.clusters),
+            "turn": 0,
+        }
+        with open(log_path, "a", encoding="utf-8") as _f:
+            _f.write(_json.dumps(_backend_init_event) + "\n")
+        print(f"[startup] HDBSCANBackend: K={len(initial_state.clusters)} clusters discovered")
 
     id_to_text = {i: r["text"] for i, r in enumerate(records)}
 
