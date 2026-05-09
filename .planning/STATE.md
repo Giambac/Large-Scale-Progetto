@@ -3,21 +3,21 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 2 — Clustering Agent Core (Trio)
-current_plan: Phase 2 Plan 06 complete — Ready to execute plans 07-08
+current_plan: Phase 2 Plan 07 complete — Ready to execute plan 08
 status: ready_to_execute
 last_updated: "2026-05-09T00:00:00.000Z"
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 8
-  completed_plans: 6
-  percent: 33
+  completed_plans: 7
+  percent: 37
 ---
 
 # Project State: Conversational Clustering
 
 **Last updated:** 2026-05-09
-**Updated by:** /gsd-plan-phase 2 (Trio additions)
+**Updated by:** execute-plan 02-07 (VIZ-V2-01 UMAP projection panel)
 
 ---
 
@@ -33,21 +33,21 @@ progress:
 
 **Milestone:** v1
 **Current phase:** 2 — Clustering Agent Core (Trio)
-**Current plan:** Plan 06 complete — BACK-V2-01 done; plans 07-08 pending
-**Status:** Phase 2 Trio in progress — 6/8 plans done (plan 06 complete 2026-05-09)
+**Current plan:** Plan 07 complete — VIZ-V2-01 done; plan 08 pending
+**Status:** Phase 2 Trio in progress — 7/8 plans done (plan 07 complete 2026-05-09)
 
 **Progress:**
 
 ```
 Phase 1 [##########] 100% Pre-Code Obligations and Foundation ✓
-Phase 2 [███████░░░]  75% Clustering Agent Core (v1 ✓, BACK-V2-01 ✓, VIZ/UI pending)
+Phase 2 [████████░░]  87% Clustering Agent Core (v1 ✓, BACK-V2-01 ✓, VIZ-V2-01 ✓, UI pending)
 Phase 3 [          ]   0% Oracle Agent
 Phase 4 [          ]   0% Judge Agent
 Phase 5 [          ]   0% Ablation Harness and Strategies
 Phase 6 [          ]   0% Generalization and Human Validation
 ```
 
-**Overall:** 1/6 phases complete (Phase 2 in progress — Trio execution pending)
+**Overall:** 1/6 phases complete (Phase 2 in progress — plan 08 pending)
 
 ---
 
@@ -56,7 +56,7 @@ Phase 6 [          ]   0% Generalization and Human Validation
 | Metric | Value |
 |--------|-------|
 | Phases complete | 2/6 |
-| Plans complete | 10/? |
+| Plans complete | 11/? |
 | Requirements satisfied | 17/33 |
 | Blockers | 0 |
 
@@ -72,6 +72,9 @@ Phase 6 [          ]   0% Generalization and Human Validation
 | ClusteringBackend Protocol shape | ABC vs. typing.Protocol for backend contract | **Resolved (Plan 06): runtime_checkable Protocol — duck typing, no inheritance required** |
 | KMeansBackend K initialization timing | __init__ vs. first fit() call for BIC K selection | **Resolved (Plan 06): lazy init at first fit() call; _k can be overridden for tests** |
 | BIC GMM covariance type | full vs. diag covariance for 768-dim embeddings | **Resolved (Plan 06): diag + max_iter=50 for startup speed; acceptable for research tool** |
+| UMAP random_state for projection | Fixed random_state=42 ensures identical coords across runs on same dataset | **Resolved (Plan 07): random_state=42 in _compute_projection** |
+| Projection recompute trigger | Expensive UMAP refit should not happen every turn | **Resolved (Plan 07): recompute only on SplitFeedback or MergeFeedback (D-22)** |
+| post_turn_callback hook design | How to wire per-turn side effects without coupling the loop to projection logic | **Resolved (Plan 07): Optional[Callable] parameter, default None, called after AuditLog write** |
 | sklearn HDBSCAN `probabilities_` vs. standalone `hdbscan` full multinomial vectors | Determines SoftAssignment data structure and `f_uncertainty` computation; cascading if retrofitted | **Resolved (Phase 1): standalone `hdbscan` 0.8.42** |
 | Primary dataset (Amazon Reviews 2023, IMDB, or support tickets) | Held-out split must be locked before any code runs | Unresolved — decide at Phase 0/Phase 1 |
 | Oracle cognitive-load weight parameters | Cognitive load is both a design constraint and primary metric; wrong weights produce broken metric | Unresolved — decide at Phase 3 |
@@ -111,9 +114,9 @@ None.
 ## Session Continuity
 
 **Last session:** 2026-05-09
-**Stopped at:** Plan 06 (BACK-V2-01) complete — ClusteringBackend Protocol + KMeansBackend + --backend CLI flag implemented
+**Stopped at:** Plan 07 (VIZ-V2-01) complete — UMAP projection panel + projection_update SocketIO event + post_turn_callback hook implemented
 
-**To resume:** Run `/gsd-execute-phase 2` to execute plans 07-08 (VIZ-V2-01, UI-V2-01).
+**To resume:** Run `/gsd-execute-phase 2` to execute plan 08 (UI-V2-01 persistent sessions).
 
 **Existing repo artifacts:**
 

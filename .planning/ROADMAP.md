@@ -57,7 +57,7 @@
 
 **Trio requirements** (in progress):
 - ✅ BACK-V2-01: k-means backend alongside HDBSCAN — ClusteringBackend Protocol, HDBSCANBackend, KMeansBackend, --backend CLI flag (plan 06 complete)
-- VIZ-V2-01: UMAP/t-SNE 2D projection in web UI with color-coded cluster membership (plan 07 pending)
+- ✅ VIZ-V2-01: UMAP 2D projection in web UI with color-coded cluster membership — server-side UMAP, projection_update SocketIO event, canvas scatter plot (plan 07 complete)
 - UI-V2-01: persistent sessions — state saved to disk and resumable across server restarts (plan 08 pending)
 
 **Success Criteria:**
@@ -172,7 +172,7 @@
 | Phase | Status | Target week |
 |-------|--------|-------------|
 | 1. Pre-Code Obligations and Foundation | ✅ COMPLETE | — |
-| 2. Clustering Agent Core | 🔄 In progress — v1 done, Trio reqs pending | 1–2 |
+| 2. Clustering Agent Core | 🔄 In progress — v1 done, BACK/VIZ done, UI-V2-01 pending | 1–2 |
 | 3. Oracle Agent | ⬜ Not started | 2 |
 | 4. Judge Agent | ⬜ Not started | 2–3 |
 | 5. Ablation Harness and Strategies | ⬜ Not started | 3 |
@@ -202,7 +202,7 @@
 | UI-01 | Phase 2 ✅ | Web UI |
 | UI-02 | Phase 2 ✅ | Web UI |
 | BACK-V2-01 | Phase 2 ✅ | Multiple backends |
-| VIZ-V2-01 | Phase 2 | UMAP/t-SNE |
+| VIZ-V2-01 | Phase 2 ✅ | UMAP/t-SNE |
 | UI-V2-01 | Phase 2 | Persistent sessions |
 | ORC-01 | Phase 3 | Oracle Agent |
 | ORC-02 | Phase 3 | Oracle Agent |
