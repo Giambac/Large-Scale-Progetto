@@ -126,3 +126,35 @@ header h1 { margin: 0; font-size: 1.1rem; }
     border: 1px solid #eee;
     border-radius: 4px;
 }
+
+/* UI-V2-01: Sessions list (D-28) */
+#sessions-list {
+    padding: 0;
+    margin: 0;
+    list-style: none;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.session-item {
+    padding: 4px 6px;
+    border-bottom: 1px solid #eee;
+    font-size: 0.78rem;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+.session-item:hover {
+    background: #f0f4ff;
+}
+
+.session-ts {
+    font-weight: 500;
+    color: #1a1a2e;
+    display: block;
+}
+
+.session-meta {
+    color: #666;
+    font-size: 0.74rem;
+}

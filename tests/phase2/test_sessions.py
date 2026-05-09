@@ -8,11 +8,18 @@ import pytest
 
 @pytest.fixture
 def client():
-    """Flask test client with testing mode enabled."""
+    """Flask test client with testing mode enabled.
+    PROPAGATE_EXCEPTIONS=False ensures AssertionError in view functions
+    becomes a 500 response rather than propagating to the test (fail-loudly
+    asserts in routes still crash the request but return a status code to test).
+    """
     from web.app import app
     app.config["TESTING"] = True
+    app.config["PROPAGATE_EXCEPTIONS"] = False
     with app.test_client() as c:
         yield c
+    # Restore default so other test fixtures are not affected
+    app.config["PROPAGATE_EXCEPTIONS"] = True
 
 
 @pytest.fixture

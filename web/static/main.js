@@ -9,9 +9,56 @@
 
 const socket = io();
 
+// ── Session list (UI-V2-01, D-28) ────────────────────────────────
+function loadSessionsList() {
+    fetch('/sessions')
+        .then(function (r) { return r.json(); })
+        .then(function (sessions) { renderSessionsList(sessions); })
+        .catch(function (err) {
+            console.error('Failed to load sessions:', err);
+        });
+}
+
+function renderSessionsList(sessions) {
+    const list = document.getElementById('sessions-list');
+    if (!list) return;
+    list.innerHTML = '';
+    if (!sessions || sessions.length === 0) {
+        list.innerHTML = '<li class="placeholder">No sessions yet.</li>';
+        return;
+    }
+    sessions.forEach(function (s) {
+        const li = document.createElement('li');
+        li.className = 'session-item';
+        li.title = 'Click to resume session ' + s.session_id;
+        li.innerHTML =
+            '<span class="session-ts">' + escapeHtml(s.timestamp) + '</span> ' +
+            '<span class="session-meta">' + s.cluster_count + ' clusters, turn ' + s.turn_count + '</span>';
+        li.addEventListener('click', function () { resumeSession(s.session_id); });
+        list.appendChild(li);
+    });
+}
+
+function resumeSession(sessionId) {
+    document.getElementById('status-banner').textContent = 'Status: Resuming session ' + sessionId + '...';
+    fetch('/resume/' + encodeURIComponent(sessionId), { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            document.getElementById('status-banner').textContent =
+                'Status: Resumed — ' + sessionId + ' (turn ' + data.turn_index + ')';
+            // state_update will be emitted by server via SocketIO; UI updates automatically
+            loadSessionsList();  // refresh session list to show updated turn count
+        })
+        .catch(function (err) {
+            document.getElementById('status-banner').textContent =
+                'Status: Resume failed — ' + err;
+        });
+}
+
 // ── Connection events ─────────────────────────────────────────────
 socket.on('connect', function () {
     document.getElementById('status-banner').textContent = 'Status: Connected';
+    loadSessionsList();  // UI-V2-01: refresh session list on (re)connect
 });
 
 socket.on('disconnect', function () {
