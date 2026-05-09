@@ -55,10 +55,10 @@
 - ✅ UI-01: web UI showing cluster assignments, soft probs, conversation history, per-turn metrics (partial — contradiction count and convergence signal deferred to Phase 4)
 - ✅ UI-02: dataset upload via web UI
 
-**Trio requirements** (pending):
-- BACK-V2-01: k-means backend alongside HDBSCAN (LLM-first optional if time allows)
-- VIZ-V2-01: UMAP/t-SNE 2D projection in web UI with color-coded cluster membership
-- UI-V2-01: persistent sessions — state saved to disk and resumable across server restarts
+**Trio requirements** (in progress):
+- ✅ BACK-V2-01: k-means backend alongside HDBSCAN — ClusteringBackend Protocol, HDBSCANBackend, KMeansBackend, --backend CLI flag (plan 06 complete)
+- VIZ-V2-01: UMAP/t-SNE 2D projection in web UI with color-coded cluster membership (plan 07 pending)
+- UI-V2-01: persistent sessions — state saved to disk and resumable across server restarts (plan 08 pending)
 
 **Success Criteria:**
 1. f_output returns complete clustering assignment even mid-conversation ✅
@@ -201,7 +201,7 @@
 | HIER-02 | Phase 2 ✅ | Hierarchy |
 | UI-01 | Phase 2 ✅ | Web UI |
 | UI-02 | Phase 2 ✅ | Web UI |
-| BACK-V2-01 | Phase 2 | Multiple backends |
+| BACK-V2-01 | Phase 2 ✅ | Multiple backends |
 | VIZ-V2-01 | Phase 2 | UMAP/t-SNE |
 | UI-V2-01 | Phase 2 | Persistent sessions |
 | ORC-01 | Phase 3 | Oracle Agent |
