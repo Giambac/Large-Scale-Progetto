@@ -2,22 +2,22 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 2 — Clustering Agent Core (Trio)
-current_plan: Phase 2 Plan 07 complete — Ready to execute plan 08
+current_phase: 3 — Oracle Agent
+current_plan: Phase 2 complete — Ready to execute Phase 3
 status: ready_to_execute
-last_updated: "2026-05-09T00:00:00.000Z"
+last_updated: "2026-05-10T00:00:00.000Z"
 progress:
   total_phases: 6
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 8
-  completed_plans: 7
-  percent: 37
+  completed_plans: 8
+  percent: 50
 ---
 
 # Project State: Conversational Clustering
 
-**Last updated:** 2026-05-09
-**Updated by:** execute-plan 02-07 (VIZ-V2-01 UMAP projection panel)
+**Last updated:** 2026-05-10
+**Updated by:** execute-plan 02-08 (UI-V2-01 persistent sessions)
 
 ---
 
@@ -25,29 +25,29 @@ progress:
 
 **Core value:** The interaction loop converges toward oracle-accepted clusterings efficiently, with every design decision — what to show, what to ask, when to stop — measured against cognitive load and information gain.
 
-**Current focus:** Phase 3 — Oracle Agent (Phase 2 complete)
+**Current focus:** Phase 3 — Oracle Agent
 
 ---
 
 ## Current Position
 
 **Milestone:** v1
-**Current phase:** 2 — Clustering Agent Core (Trio)
-**Current plan:** Plan 07 complete — VIZ-V2-01 done; plan 08 pending
-**Status:** Phase 2 Trio in progress — 7/8 plans done (plan 07 complete 2026-05-09)
+**Current phase:** 3 — Oracle Agent
+**Current plan:** Phase 2 complete (all 8 plans done 2026-05-10) — ready to plan Phase 3
+**Status:** Phase 2 Trio complete — 8/8 plans done
 
 **Progress:**
 
 ```
 Phase 1 [##########] 100% Pre-Code Obligations and Foundation ✓
-Phase 2 [████████░░]  87% Clustering Agent Core (v1 ✓, BACK-V2-01 ✓, VIZ-V2-01 ✓, UI pending)
+Phase 2 [##########] 100% Clustering Agent Core (v1 ✓, BACK-V2-01 ✓, VIZ-V2-01 ✓, UI-V2-01 ✓)
 Phase 3 [          ]   0% Oracle Agent
 Phase 4 [          ]   0% Judge Agent
 Phase 5 [          ]   0% Ablation Harness and Strategies
 Phase 6 [          ]   0% Generalization and Human Validation
 ```
 
-**Overall:** 1/6 phases complete (Phase 2 in progress — plan 08 pending)
+**Overall:** 2/6 phases complete (Phase 3 pending)
 
 ---
 
@@ -56,8 +56,8 @@ Phase 6 [          ]   0% Generalization and Human Validation
 | Metric | Value |
 |--------|-------|
 | Phases complete | 2/6 |
-| Plans complete | 11/? |
-| Requirements satisfied | 17/33 |
+| Plans complete | 12/? |
+| Requirements satisfied | 18/33 |
 | Blockers | 0 |
 
 ---
@@ -75,6 +75,9 @@ Phase 6 [          ]   0% Generalization and Human Validation
 | UMAP random_state for projection | Fixed random_state=42 ensures identical coords across runs on same dataset | **Resolved (Plan 07): random_state=42 in _compute_projection** |
 | Projection recompute trigger | Expensive UMAP refit should not happen every turn | **Resolved (Plan 07): recompute only on SplitFeedback or MergeFeedback (D-22)** |
 | post_turn_callback hook design | How to wire per-turn side effects without coupling the loop to projection logic | **Resolved (Plan 07): Optional[Callable] parameter, default None, called after AuditLog write** |
+| Session directory format and persistence | Timestamp dirs under sessions/ with state.json per-turn snapshots | **Resolved (Plan 08): sessions/<YYYY-MM-DDTHH-MM-SS>/ with state.json, audit_log.jsonl, embeddings.npy** |
+| Flask PROPAGATE_EXCEPTIONS in tests | AssertionError in Flask routes must return 500 to test client, not propagate | **Resolved (Plan 08): PROPAGATE_EXCEPTIONS=False in test fixture** |
+| _per_turn_callback combining D-27 and D-22 | Single callback for both state.json write and UMAP projection recompute | **Resolved (Plan 08): _per_turn_callback composes both concerns** |
 | sklearn HDBSCAN `probabilities_` vs. standalone `hdbscan` full multinomial vectors | Determines SoftAssignment data structure and `f_uncertainty` computation; cascading if retrofitted | **Resolved (Phase 1): standalone `hdbscan` 0.8.42** |
 | Primary dataset (Amazon Reviews 2023, IMDB, or support tickets) | Held-out split must be locked before any code runs | Unresolved — decide at Phase 0/Phase 1 |
 | Oracle cognitive-load weight parameters | Cognitive load is both a design constraint and primary metric; wrong weights produce broken metric | Unresolved — decide at Phase 3 |
@@ -87,6 +90,7 @@ Phase 6 [          ]   0% Generalization and Human Validation
 - JSON-first logging from Phase 1; migrate to MLflow at Phase 5
 - Inject only a structured state summary (under 500 tokens) into context window, not full history
 - Test state integrity at turn 20, 30, 50 with synthetic oracle before any human study
+- Sessions persist in sessions/<timestamp>/ directories; server restart does not lose state
 
 ### Research Flags by Phase
 
@@ -104,6 +108,7 @@ Phase 6 [          ]   0% Generalization and Human Validation
 - [ ] Write human validation study protocol (N=5-10, within-subject, consented) — needed before Phase 6
 - [ ] Decide LangGraph vs. plain Python before Phase 2 begins
 - [ ] Decide sklearn HDBSCAN vs. standalone `hdbscan` package at Phase 1 gate
+- [ ] Install umap-learn and hdbscan packages in environment (hdbscan/umap tests failing due to missing modules)
 
 ### Blockers
 
@@ -113,10 +118,10 @@ None.
 
 ## Session Continuity
 
-**Last session:** 2026-05-09
-**Stopped at:** Plan 07 (VIZ-V2-01) complete — UMAP projection panel + projection_update SocketIO event + post_turn_callback hook implemented
+**Last session:** 2026-05-10
+**Stopped at:** Plan 08 (UI-V2-01) complete — persistent sessions with timestamped directories, per-turn state.json snapshots, GET /sessions, POST /resume, Sessions section in sidebar
 
-**To resume:** Run `/gsd-execute-phase 2` to execute plan 08 (UI-V2-01 persistent sessions).
+**To resume:** Run `/gsd-plan-phase 3` to plan Phase 3 (Oracle Agent).
 
 **Existing repo artifacts:**
 

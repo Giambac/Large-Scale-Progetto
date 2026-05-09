@@ -13,7 +13,7 @@
 ## Phases
 
 - [x] **Phase 1: Pre-Code Obligations and Foundation** — COMPLETE
-- [ ] **Phase 2: Clustering Agent Core** — Conversational loop, f_* functions, feedback types, hierarchy, web UI, multiple backends
+- [x] **Phase 2: Clustering Agent Core** — Conversational loop, f_* functions, feedback types, hierarchy, web UI, multiple backends, UMAP projection, persistent sessions — COMPLETE 2026-05-10
 - [ ] **Phase 3: Oracle Agent** — Configurable LLM oracle with noise, cognitive load, drift detection
 - [ ] **Phase 4: Judge Agent** — Convergence detection, per-turn metrics, no-dialogue baseline, database
 - [ ] **Phase 5: Ablation Harness and Strategies** — 3 strategies, N×M experiment runner, bootstrap CI
@@ -37,10 +37,10 @@
 
 ---
 
-### Phase 2: Clustering Agent Core
+### ✅ Phase 2: Clustering Agent Core — COMPLETE 2026-05-10
 **Goal:** The conversational loop works end-to-end with all feedback types, the web UI is accessible, and multiple clustering backends are available
 **Depends on:** Phase 1
-**Target:** week 1–2
+**Completed:** 2026-05-10 — all 8 plans done
 
 **v1 Requirements** (complete — 2026-05-07):
 - ✅ CLUS-01: f_output always returns complete clustering, no partial states
@@ -55,10 +55,10 @@
 - ✅ UI-01: web UI showing cluster assignments, soft probs, conversation history, per-turn metrics (partial — contradiction count and convergence signal deferred to Phase 4)
 - ✅ UI-02: dataset upload via web UI
 
-**Trio requirements** (in progress):
+**Trio requirements** (all complete):
 - ✅ BACK-V2-01: k-means backend alongside HDBSCAN — ClusteringBackend Protocol, HDBSCANBackend, KMeansBackend, --backend CLI flag (plan 06 complete)
 - ✅ VIZ-V2-01: UMAP 2D projection in web UI with color-coded cluster membership — server-side UMAP, projection_update SocketIO event, canvas scatter plot (plan 07 complete)
-- UI-V2-01: persistent sessions — state saved to disk and resumable across server restarts (plan 08 pending)
+- ✅ UI-V2-01: persistent sessions — timestamped session dirs, per-turn state.json snapshots, GET /sessions, POST /resume, Sessions section in sidebar (plan 08 complete)
 
 **Success Criteria:**
 1. f_output returns complete clustering assignment even mid-conversation ✅
@@ -66,8 +66,8 @@
 3. f_next_best_step selects among show/ask/stop via Strategy interface; RandomStrategy runs 30+ turns without errors ✅
 4. f_next_state applies all 4 feedback types; latest intent wins on contradictions ✅
 5. Hierarchy is navigable and grows incrementally ✅
-6. Web UI accessible during session with UMAP visualization, dataset upload, persistent sessions *(UMAP and persistence pending)*
-7. k-means available as an alternative backend to HDBSCAN *(pending)*
+6. Web UI accessible during session with UMAP visualization, dataset upload, persistent sessions ✅
+7. k-means available as an alternative backend to HDBSCAN ✅
 
 ---
 
@@ -172,7 +172,7 @@
 | Phase | Status | Target week |
 |-------|--------|-------------|
 | 1. Pre-Code Obligations and Foundation | ✅ COMPLETE | — |
-| 2. Clustering Agent Core | 🔄 In progress — v1 done, BACK/VIZ done, UI-V2-01 pending | 1–2 |
+| 2. Clustering Agent Core | ✅ COMPLETE — v1 + BACK-V2-01 + VIZ-V2-01 + UI-V2-01 all done (2026-05-10) | 1–2 |
 | 3. Oracle Agent | ⬜ Not started | 2 |
 | 4. Judge Agent | ⬜ Not started | 2–3 |
 | 5. Ablation Harness and Strategies | ⬜ Not started | 3 |
@@ -203,7 +203,7 @@
 | UI-02 | Phase 2 ✅ | Web UI |
 | BACK-V2-01 | Phase 2 ✅ | Multiple backends |
 | VIZ-V2-01 | Phase 2 ✅ | UMAP/t-SNE |
-| UI-V2-01 | Phase 2 | Persistent sessions |
+| UI-V2-01 | Phase 2 ✅ | Persistent sessions |
 | ORC-01 | Phase 3 | Oracle Agent |
 | ORC-02 | Phase 3 | Oracle Agent |
 | ORC-03 | Phase 3 | Oracle Agent |
