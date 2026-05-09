@@ -16,7 +16,7 @@ emit calls are skipped — useful for unit tests without a running Flask server.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional, Callable
 
 from src.agent_functions import f_output, f_next_best_step, f_next_state
 from src.feedback_parser import parse_feedback
@@ -68,6 +68,7 @@ def run_conversation(
     socketio: object | None = None,
     id_to_text: dict[int, str] | None = None,
     llm_client: object | None = None,
+    post_turn_callback: Optional[Callable] = None,  # (new_state, deltas) -> None
 ) -> ClusteringState:
     """
     Plain Python while loop (D-01). Runs until a stopping condition fires.
@@ -83,6 +84,8 @@ def run_conversation(
         socketio: SocketIO instance for emitting state_update events. None -> skip emits.
         id_to_text: dict[item_id, text] for cluster naming. None -> empty dict.
         llm_client: Anthropic client for parse_feedback. None -> no parsing (deltas=[]).
+        post_turn_callback: Optional callable (new_state, deltas) -> None. Called after
+            each turn's AuditLog write. Used for projection recompute on split/merge (D-22).
 
     Returns:
         Final ClusteringState when the loop terminates.
@@ -129,6 +132,10 @@ def run_conversation(
 
         # Step 6: Write AuditLog (D-04: loop owns the JSONL write)
         append_to_audit_log(new_state, log_path)
+
+        # Step 6b: Call post_turn_callback if provided (D-22: projection recompute hook)
+        if post_turn_callback is not None:
+            post_turn_callback(new_state, deltas)
 
         # Step 7: Emit state update via SocketIO (skip if socketio is None — unit test mode)
         if socketio is not None:

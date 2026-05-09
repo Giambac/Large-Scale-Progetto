@@ -12,6 +12,114 @@ from flask import Flask, jsonify, render_template, request
 from flask_socketio import SocketIO
 
 
+# ── UMAP projection helpers (VIZ-V2-01) ──────────────────────────────────────
+
+def _compute_projection(embeddings: "np.ndarray") -> "np.ndarray":
+    """
+    Compute 2D UMAP projection of embeddings (D-21).
+
+    Uses fixed random_state=42 for reproducibility across runs on the same dataset.
+    n_neighbors=15, min_dist=0.1 are reasonable defaults for 768-dim text embeddings.
+
+    Args:
+        embeddings: shape (N, dim)
+
+    Returns:
+        coords: shape (N, 2) float32
+    """
+    import numpy as np
+    import umap as umap_lib
+    reducer = umap_lib.UMAP(
+        n_components=2,
+        n_neighbors=15,
+        min_dist=0.1,
+        random_state=42,
+        verbose=False,
+    )
+    coords = reducer.fit_transform(embeddings)
+    assert coords.shape == (embeddings.shape[0], 2), (
+        f"UMAP output shape {coords.shape} != ({embeddings.shape[0]}, 2)"
+    )
+    return coords.astype("float32")
+
+
+# Palette of 20 visually distinct hex colors for cluster membership.
+# Cycles if there are more than 20 clusters.
+_CLUSTER_COLORS = [
+    "#e6194B", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
+    "#42d4f4", "#f032e6", "#bfef45", "#fabed4", "#469990",
+    "#dcbeff", "#9A6324", "#fffac8", "#800000", "#aaffc3",
+    "#808000", "#ffd8b1", "#000075", "#a9a9a9", "#ffffff",
+]
+
+
+def _build_projection_payload(
+    coords: "np.ndarray",
+    state: "ClusteringState",
+) -> dict:
+    """
+    Build the projection_update SocketIO payload from UMAP coords and ClusteringState.
+
+    Payload format:
+        coords:        list of N [x, y] pairs (floats)
+        cluster_ids:   list of N cluster_id ints (one per item, ordered by item_id)
+        max_probs:     list of N floats — max soft_prob per item (for opacity)
+        cluster_colors: dict str(cluster_id) -> "#rrggbb"
+    """
+    import numpy as np
+    N = len(state.assignments)
+    assert coords.shape[0] == N, f"coords has {coords.shape[0]} rows, state has {N} items"
+
+    # Build cluster_id list ordered by item_id (0..N-1)
+    cluster_ids = [state.assignments[i] for i in range(N)]
+
+    # Build max_probs ordered by item_id
+    max_probs = [float(max(state.soft_probs[i])) for i in range(N)]
+
+    # Assign a color to each unique cluster_id (stable across calls)
+    sorted_cluster_ids = sorted({c.id for c in state.clusters})
+    cluster_colors = {
+        str(cid): _CLUSTER_COLORS[idx % len(_CLUSTER_COLORS)]
+        for idx, cid in enumerate(sorted_cluster_ids)
+    }
+
+    return {
+        "coords": coords.tolist(),       # list of [x, y] pairs
+        "cluster_ids": cluster_ids,
+        "max_probs": max_probs,
+        "cluster_colors": cluster_colors,
+    }
+
+
+def _should_recompute_projection(deltas: list) -> bool:
+    """
+    Return True iff any delta is a SplitFeedback or MergeFeedback (D-22).
+
+    Projection is recomputed ONLY on cluster-count changes (split/merge).
+    NOT recomputed on point moves (embedding positions unchanged).
+    NOT recomputed every turn (too expensive and disorienting).
+    """
+    from src.feedback import SplitFeedback, MergeFeedback
+    return any(isinstance(d, (SplitFeedback, MergeFeedback)) for d in deltas)
+
+
+def compute_and_emit_projection(
+    store: object,
+    state: "ClusteringState",
+    sio: object,
+) -> None:
+    """
+    Compute UMAP projection and emit projection_update event via SocketIO (D-24).
+
+    Runs server-side. Emits coordinates as JSON over the projection_update event.
+    Called from _run_conversation_background (background thread).
+    Uses sio.emit() (instance method) — safe in background threads.
+    """
+    coords = _compute_projection(store.get_all())
+    payload = _build_projection_payload(coords, state)
+    sio.emit("projection_update", payload)
+
+
 def _parse_args() -> argparse.Namespace:
     """
     Parse CLI arguments for web/app.py.
@@ -180,9 +288,20 @@ def _run_conversation_background(records: list[dict], log_path: str) -> None:
 
     id_to_text = {i: r["text"] for i, r in enumerate(records)}
 
+    # Emit initial projection (D-22: once after initial clustering)
+    compute_and_emit_projection(store, initial_state, socketio)
+
     # Phase 2: use a neutral MockOracle (Phase 3 replaces with real Oracle Agent)
     neutral_reply = OracleReply(raw_text="", satisfied=False, turn_cognitive_load=0.0)
     oracle = MockOracle(script=[neutral_reply] * 30)
+
+    def _projection_post_turn(new_state, deltas):
+        # D-22: re-emit projection only on cluster-count changes (split/merge).
+        # MockOracle never produces SplitFeedback or MergeFeedback in Phase 2,
+        # so this fires zero times at runtime — but the wiring is correct and
+        # will activate automatically when the real Oracle Agent ships in Phase 3.
+        if _should_recompute_projection(deltas):
+            compute_and_emit_projection(store, new_state, socketio)
 
     final_state = run_conversation(
         initial_state=initial_state,
@@ -195,6 +314,7 @@ def _run_conversation_background(records: list[dict], log_path: str) -> None:
         socketio=socketio,  # INSTANCE METHOD — context-free; safe in background thread
         id_to_text=id_to_text,
         llm_client=client,
+        post_turn_callback=_projection_post_turn,  # D-22: recompute on split/merge
     )
     _session["state"] = final_state
 

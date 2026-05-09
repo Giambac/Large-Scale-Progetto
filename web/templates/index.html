@@ -14,6 +14,13 @@
       <button type="submit">Upload Dataset</button>
     </form>
   </header>
+  <!-- VIZ-V2-01: Full-width UMAP projection panel (D-23) -->
+  <section class="projection-panel">
+    <h2 class="projection-title">2D Embedding Projection (UMAP)</h2>
+    <canvas id="projection-canvas" width="1200" height="300">
+      UMAP projection will appear here after dataset upload.
+    </canvas>
+  </section>
   <main class="layout">
     <!-- Left: cluster cards grid (UI-01) -->
     <section id="cluster-cards" class="cluster-grid">

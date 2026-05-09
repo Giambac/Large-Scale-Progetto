@@ -34,6 +34,66 @@ socket.on('session_stopped', function (data) {
         'Status: Stopped — ' + data.reason;
 });
 
+// ── UMAP projection renderer (VIZ-V2-01) ─────────────────────────
+socket.on('projection_update', function (data) {
+    // data = { coords, cluster_ids, max_probs, cluster_colors }
+    // coords: list of N [x, y] pairs
+    // cluster_ids: list of N cluster_id ints
+    // max_probs: list of N floats (used for point opacity)
+    // cluster_colors: { str(cluster_id): "#rrggbb" }
+    drawProjection(data.coords, data.cluster_ids, data.max_probs, data.cluster_colors);
+});
+
+function drawProjection(coords, clusterIds, maxProbs, clusterColors) {
+    const canvas = document.getElementById('projection-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    if (!coords || coords.length === 0) return;
+
+    // Compute bounding box for normalization
+    const xs = coords.map(function (p) { return p[0]; });
+    const ys = coords.map(function (p) { return p[1]; });
+    const xMin = Math.min.apply(null, xs);
+    const xMax = Math.max.apply(null, xs);
+    const yMin = Math.min.apply(null, ys);
+    const yMax = Math.max.apply(null, ys);
+    const xRange = xMax - xMin || 1;
+    const yRange = yMax - yMin || 1;
+    const margin = 20;  // pixels
+
+    function toCanvas(x, y) {
+        return [
+            margin + ((x - xMin) / xRange) * (W - 2 * margin),
+            margin + ((y - yMin) / yRange) * (H - 2 * margin),
+        ];
+    }
+
+    // Draw each point
+    coords.forEach(function (coord, idx) {
+        const clusterId = String(clusterIds[idx]);
+        const color = clusterColors[clusterId] || '#888888';
+        const opacity = 0.3 + 0.7 * (maxProbs[idx] || 0.5);  // range [0.3, 1.0]
+        const [cx, cy] = toCanvas(coord[0], coord[1]);
+
+        ctx.beginPath();
+        ctx.arc(cx, cy, 3, 0, 2 * Math.PI);
+        ctx.fillStyle = hexToRgba(color, opacity);
+        ctx.fill();
+    });
+}
+
+function hexToRgba(hex, alpha) {
+    // Convert "#rrggbb" to "rgba(r,g,b,alpha)"
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha.toFixed(2) + ')';
+}
+
 // ── Cluster card renderer ─────────────────────────────────────────
 function renderClusterCards(clusters, softProbs) {
     const container = document.getElementById('cluster-cards');
