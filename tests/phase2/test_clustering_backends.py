@@ -4,6 +4,8 @@ import math
 import numpy as np
 import pytest
 
+pytest.importorskip("hdbscan", reason="hdbscan not installed — pip install hdbscan to run backend tests")
+
 
 @pytest.fixture
 def small_embeddings():

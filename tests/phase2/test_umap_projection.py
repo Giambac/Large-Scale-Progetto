@@ -3,6 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+pytest.importorskip("umap", reason="umap-learn not installed — pip install umap-learn to run projection tests")
+
 
 @pytest.fixture
 def tiny_embeddings():
