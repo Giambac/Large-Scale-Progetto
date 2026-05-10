@@ -15,7 +15,6 @@ import datetime
 import math
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-import hdbscan
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.mixture import GaussianMixture
@@ -247,6 +246,7 @@ def run_hdbscan(
         - soft_probs.shape[1] > 0 (at least 1 cluster column).
         - All rows of soft_probs sum to ~1.0 after normalization.
     """
+    import hdbscan  # lazy import — hdbscan is optional; fails loudly here if not installed
     assert embeddings.ndim == 2, f"Expected 2D array, got shape {embeddings.shape}"
     assert embeddings.shape[0] > 0, "Cannot cluster empty embedding set"
 
