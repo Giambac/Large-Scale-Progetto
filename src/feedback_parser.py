@@ -80,7 +80,7 @@ def _build_delta(item: dict, valid_cluster_ids: set[int]) -> FeedbackDelta:
         )
         return SplitFeedback(
             cluster_id=item["cluster_id"],
-            seed_item_ids=tuple(item["seed_item_ids"]),
+            seed_item_ids=list(item["seed_item_ids"]),
         )
 
     if feedback_type == "merge":

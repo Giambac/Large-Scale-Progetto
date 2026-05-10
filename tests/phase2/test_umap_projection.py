@@ -91,7 +91,7 @@ def test_should_recompute_projection_split():
     """_should_recompute_projection returns True for SplitFeedback."""
     from web.app import _should_recompute_projection
     from src.feedback import SplitFeedback
-    assert _should_recompute_projection([SplitFeedback(cluster_id=0, seed_item_ids=())]) is True
+    assert _should_recompute_projection([SplitFeedback(cluster_id=0, seed_item_ids=[])]) is True
 
 
 def test_should_recompute_projection_merge():

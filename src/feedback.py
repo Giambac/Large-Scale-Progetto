@@ -30,11 +30,11 @@ class SplitFeedback:
     """Oracle requests splitting cluster_id into two sub-clusters.
 
     seed_item_ids: representative items the oracle names for each sub-cluster.
-    May be empty — empty tuple triggers k-means++ fallback initialization (D-08).
-    Uses tuple[int, ...] (not list) to enforce true immutability for a frozen dataclass.
+    May be empty — empty list triggers k-means++ fallback initialization (D-08).
+    Uses list[int] to match the JSON array type produced by the feedback parser.
     """
     cluster_id: int
-    seed_item_ids: tuple[int, ...]
+    seed_item_ids: list[int]
 
 
 @dataclass(frozen=True)
