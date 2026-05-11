@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "timestamp": "2026-05-11T18:10:00Z",
+  "timestamp": "2026-05-11T19:00:00Z",
   "phase": "3",
   "phase_name": "Oracle Agent",
   "phase_dir": ".planning/phases/03-oracle-agent",
@@ -9,47 +9,28 @@
   "total_tasks": 0,
   "status": "paused",
   "completed_tasks": [
-    {
-      "id": "2/UAT",
-      "name": "Phase 2 UAT completed — 18/18 passed, 0 issues",
-      "status": "done",
-      "commit": null
-    }
+    {"id": "2/UAT", "name": "Phase 2 UAT — 18/18 passed", "status": "done", "commit": "a95e01e"},
+    {"id": "3/discuss", "name": "Phase 3 discuss — 03-CONTEXT.md written (12 decisions)", "status": "done", "commit": "74ee4fc"}
   ],
   "remaining_tasks": [
-    {"id": "3/1", "name": "Discuss Phase 3 context (oracle design intent)", "status": "not_started"},
-    {"id": "3/2", "name": "Plan Phase 3 (create PLAN.md)", "status": "not_started"},
+    {"id": "3/2", "name": "Plan Phase 3 — /gsd-plan-phase 3", "status": "not_started"},
     {"id": "3/3", "name": "Execute Phase 3 plans", "status": "not_started"}
   ],
   "blockers": [
     {
-      "description": "hdbscan cannot be installed on Python 3.14/Windows — no pre-built binary wheels, MSVC C++ Build Tools absent",
+      "description": "hdbscan cannot be installed on Python 3.14/Windows — no pre-built binary wheels",
       "type": "external",
-      "workaround": "importorskip guard causes 8 backend tests to skip cleanly. To run: install MSVC C++ Build Tools or use Python 3.11/3.12"
-    },
-    {
-      "description": "sentence_transformers not installed — 13 tests in test_agent_functions.py and test_conversation_loop.py skip",
-      "type": "external",
-      "workaround": "pip install sentence-transformers to restore those tests; pre-existing, not introduced by Phase 2"
+      "workaround": "importorskip guard — 1 test skips cleanly, non-blocking"
     }
   ],
-  "human_actions_pending": [
-    {
-      "action": "Optionally install sentence-transformers to restore test_agent_functions.py and test_conversation_loop.py",
-      "context": "13 pre-existing test failures due to missing package; non-blocking",
-      "blocking": false
-    }
-  ],
+  "human_actions_pending": [],
   "decisions": [
-    {
-      "decision": "Phase 2 UAT verified complete — all 18 tests passed, no gaps found",
-      "rationale": "UAT completed this session; Test 17 (POST /resume) had a URL syntax issue in manual test instructions (angle brackets), not a code bug",
-      "phase": "2"
-    }
+    {"decision": "OracleSpec(preferred_k, semantic_axes, persona_description) — injected at construction", "rationale": "Discussed 2026-05-11", "phase": "3"},
+    {"decision": "NoiseParams: prompt-injected NL rules, fixed per run, logged as oracle_init event", "rationale": "Discussed 2026-05-11", "phase": "3"},
+    {"decision": "f_cognitive_load: pure function in cognitive_load.py, called by loop; threshold 0.7", "rationale": "Discussed 2026-05-11", "phase": "3"},
+    {"decision": "Drift: structural FeedbackDelta comparison, AuditLog only, OracleReply.contradiction_detected", "rationale": "Discussed 2026-05-11", "phase": "3"}
   ],
-  "uncommitted_files": [
-    ".planning/phases/02-clustering-agent-core/02-UAT.md"
-  ],
-  "next_action": "Run /gsd-plan-phase 3 to plan Phase 3 (Oracle Agent). Optionally run /gsd-discuss-phase 3 first. Reference 'Multi Agent Personalities Script.txt' in repo root before planning.",
-  "context_notes": "Phase 2 fully complete — all 10 plans + Trio reqs (BACK-V2-01, VIZ-V2-01, UI-V2-01) done and UAT verified (18/18 this session). Phase 3 Oracle Agent is the clean next step. Key open decision: oracle cognitive-load weight parameters (unresolved, flagged in STATE.md). Deadline: early June 2026."
+  "uncommitted_files": [],
+  "next_action": "Run /gsd-plan-phase 3 — 03-CONTEXT.md is ready, all decisions locked.",
+  "context_notes": "Phase 3 discussion complete. OracleProtocol signature is LOCKED — extend OracleReply fields only. ClusteringState schema is FROZEN — no new fields. f_cognitive_load is called by the loop BEFORE oracle.reply(). Drift detected AFTER parse_feedback runs. Deadline: early June 2026."
 }
