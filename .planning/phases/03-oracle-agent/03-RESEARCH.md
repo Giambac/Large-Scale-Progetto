@@ -561,23 +561,25 @@ def f_cognitive_load(state: "ClusteringState", message: str) -> float:
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Which file gets oracle_init and drift_event records?**
    - What we know: `load_audit_log()` in serialization.py calls `deserialize_state()` on every line; non-state records cause AssertionError (Pitfall 5).
    - What's unclear: Does Phase 3 write events to the same `audit_log.jsonl` or a sidecar `events.jsonl`?
    - Recommendation: Write to a separate `events.jsonl` sidecar in the same session directory. This keeps `load_audit_log()` unchanged (Phase 1 function) and avoids a breaking change to serialization.py. The planner should pick one approach and enforce it across Wave 0 (test setup) and all oracle waves.
+   - **RESOLVED:** Use `events.jsonl` sidecar. `_write_event()` helper in `conversation_loop.py` writes all oracle_init and drift_event records to the sidecar. `audit_log.jsonl` remains ClusteringState-only. Enforced by Plan 04 Task 1 and Pitfall 5 documentation.
 
 2. **How does OracleAgent receive global_instructions?**
    - What we know: `global_instructions` is a local variable in `run_conversation()`. `oracle.reply(state, message)` matches the existing `OracleProtocol` signature (2 args). D-12 says FB-04 is wired via this accumulator.
    - What's unclear: Does Phase 3 change the `OracleProtocol.reply()` signature to add `global_instructions=` kwarg, or does the loop pass it via a different mechanism?
    - Recommendation: Add an optional `global_instructions: list[str] | None = None` kwarg to `OracleAgent.reply()`. The protocol signature `reply(state, message) -> OracleReply` is structural (duck typing), so adding an optional kwarg to the concrete class does not break structural subtyping. The loop passes it explicitly only when calling an `OracleAgent`.
+   - **RESOLVED:** Optional `global_instructions: list[str] | None = None` kwarg added to `OracleAgent.reply()` (Plan 01 Task 2). Loop calls `oracle.reply(state, message, global_instructions=global_instructions)` inside an `isinstance(oracle, _OracleAgent)` branch (Plan 04 Task 2 Modification A). Protocol structural subtyping preserved.
 
 3. **Merged cluster ID after MergeFeedback**
    - What we know: Phase 2 uses a monotonic counter (D-11). The merge branch in `f_next_state` creates a new cluster.
    - What's unclear: Does the merged cluster get a brand-new ID (next counter value) or does it reuse `cluster_a_id`?
-   - Recommendation: Read `src/agent_functions.py` merge branch before implementing `_contradicts()`. If merged cluster gets a new ID, the drift detection rule needs to track (old_a, old_b) → new_id mapping in the deque, not just the MergeFeedback delta.
-
+   - Recommendation: Read `src/agent_functions.py` merge branch before implementing `_contradicts()`. If merged cluster gets a new ID, the drift detection rule needs to track (old_a, old_b) -> new_id mapping in the deque, not just the MergeFeedback delta.
+   - **RESOLVED:** Verified via `src/agent_functions.py` `_apply_merge()`: merged cluster receives a brand-new ID via `_next_cluster_id(state) = max(cluster.id) + 1` — it does NOT reuse `cluster_a_id` or `cluster_b_id`. Contradiction rule in `_contradicts()` checks both `cluster_a_id` and `cluster_b_id` of a prior `MergeFeedback` against the `cluster_id` of a new `SplitFeedback`. Implemented in Plan 03 per the interfaces block in 03-00-PLAN.md.
 ---
 
 ## Environment Availability
