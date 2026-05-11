@@ -1,0 +1,127 @@
+PIPELINE DI LAVORO COLLABORATIVO — GSD + Git
+=============================================
+
+Siamo in 3 persone che lavorano sulla stessa repository.
+Il lavoro e' diviso in 3 turni giornalieri: sera, mattina, completamento.
+Gli artefatti .planning/ sono committati su git e fungono da memoria condivisa.
+
+----------------------------------------------
+SERA — DISCUSSIONE (chiunque dei 3)
+----------------------------------------------
+
+1. Assicurarsi di essere aggiornati:
+   git pull
+
+2. Avviare la discussione della fase:
+   /gsd-discuss-phase N
+   --> crea .planning/phases/NN-name/CONTEXT.md con la visione concordata
+
+3. Salvare il contesto per il passaggio di consegne:
+   /gsd-pause-work
+   --> aggiorna STATE.md con lo stato corrente della sessione
+
+4. Committare e pushare:
+   git add .planning/
+   git commit -m "discuss(NN): phase N discussion complete"
+   git push
+
+----------------------------------------------
+MATTINA — PLANNING (Persona 1)
+----------------------------------------------
+
+1. Scaricare il lavoro della sera:
+   git pull
+
+2. Ripristinare il contesto:
+   /gsd-resume-work
+   --> legge STATE.md e mostra dove si era arrivati
+
+3. Creare il piano esecutivo:
+   /gsd-plan-phase N
+   --> usa il CONTEXT.md gia' presente, crea PLAN.md con task divisi in wave
+
+4. Salvare il contesto per il passaggio di consegne:
+   /gsd-pause-work
+
+5. Committare e pushare:
+   git add .planning/
+   git commit -m "plan(NN): phase N plan complete"
+   git push
+
+----------------------------------------------
+ESECUZIONE WAVE 1 — (Persona 2)
+----------------------------------------------
+
+1. Scaricare il piano:
+   git pull
+
+2. Ripristinare il contesto:
+   /gsd-resume-work
+
+3. Eseguire solo la prima wave:
+   /gsd-execute-phase N --wave 1
+   --> esegue i task della wave 1 e si ferma
+
+4. Salvare il contesto per il passaggio di consegne:
+   /gsd-pause-work
+
+5. Committare e pushare:
+   git add -A
+   git commit -m "feat(NN): execute phase N wave 1"
+   git push
+
+----------------------------------------------
+COMPLETAMENTO WAVE 2+ — (Persona 3)
+----------------------------------------------
+
+1. Scaricare il lavoro:
+   git pull
+
+2. Ripristinare il contesto:
+   /gsd-resume-work
+
+3. Eseguire le wave rimanenti:
+   /gsd-execute-phase N --wave 2
+   --> riprende dall'esecuzione successiva fino al completamento della fase
+
+4. Committare e pushare:
+   git add -A
+   git commit -m "feat(NN): execute phase N wave 2"
+   git push
+
+----------------------------------------------
+REGOLE PER EVITARE CONFLITTI
+----------------------------------------------
+
+- Lavorare SEMPRE sequenzialmente: ognuno aspetta il push del precedente.
+- Tutti sullo stesso branch (es. ale) — nessun branch personale.
+- Usare SEMPRE /gsd-pause-work prima di pushare e /gsd-resume-work dopo il pull.
+- Non eseguire /gsd-execute-phase N senza --wave se si vuole lasciare lavoro agli altri.
+- Verificare che .planning/ sia tracciato da git:
+    cat .planning/config.json
+    --> deve contenere "commit_docs": true (valore di default)
+
+----------------------------------------------
+STRUTTURA FILE CHIAVE
+----------------------------------------------
+
+.planning/
+├── STATE.md          --> memoria condivisa della sessione corrente
+├── ROADMAP.md        --> stato avanzamento fasi
+├── REQUIREMENTS.md   --> requisiti e copertura
+└── phases/
+    └── NN-nome-fase/
+        ├── CONTEXT.md   --> output della discussione serale
+        ├── NN-01-PLAN.md --> piano con task divisi in wave
+        └── NN-01-SUMMARY.md --> output dopo esecuzione
+
+----------------------------------------------
+COMANDI DI RIFERIMENTO RAPIDO
+----------------------------------------------
+
+/gsd-discuss-phase N    --> discussione e definizione visione fase
+/gsd-plan-phase N       --> creazione piano esecutivo
+/gsd-execute-phase N --wave K  --> esecuzione wave specifica
+/gsd-pause-work         --> salva contesto per handoff
+/gsd-resume-work        --> ripristina contesto da STATE.md
+/gsd-progress           --> mostra stato attuale del progetto

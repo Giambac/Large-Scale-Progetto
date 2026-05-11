@@ -1,0 +1,195 @@
+# 4-Week Plan — Conversational Clustering
+
+**Team:** 3 people
+**Schedule:** 2 sessions/week — 1h sync (S1) + 3h build (S2). 16h together total. Assume ~6h async per person per week.
+**Total scope:** 4 weeks, ~48 person-hours sync + ~72 person-hours async.
+
+> **Warning.** The original brief offers two scope tiers. The **trio** tier (web UI + multiple backends + UMAP + N×M human study) is **not feasible** in 4 weeks. We are doing the **solo/pair** tier with three people, which means we go *deeper* on evaluation rather than wider on features.
+
+---
+
+## Scope decisions (locked before week 1)
+
+- **CLI / notebook only.** No web UI. Output is JSON + matplotlib plots.
+- **One dataset.** Pick in week 1, freeze it. Suggested: 20 Newsgroups (subset to 5 categories) or 2k Amazon Reviews. Text only.
+- **One representation:** sentence embeddings (e.g. `all-MiniLM-L6-v2`) + a small LLM on top.
+- **One backend:** k-means as the floor algorithm; LLM does naming, descriptions, splits/merges. No HDBSCAN, no UMAP.
+- **Headline experiment:** ablation across **3 interaction strategies** (random / uncertainty-driven / boundary-driven question selection) against an **LLM-simulated oracle**. Plus a small human-validation slice (3–5 people, 1 task each) to sanity-check the simulated oracle.
+- **No hierarchy navigation.** Flat clustering only.
+- **No generalization test.** Mention as future work.
+- **State is in-memory + JSONL log.** No database, no sessions.
+
+If we are ahead of schedule at end of week 3, we add the generalization test. Nothing else.
+
+---
+
+## Roles
+
+| Person | Owns | Files |
+|--------|------|-------|
+| **A — Clustering core** | Embeddings, k-means, `f_output`, `f_uncertainty`, cluster naming | `cluster.py`, `state.py` |
+| **B — Conversation loop** | `f_next_best_step`, `f_next_state`, oracle protocol, feedback parsing | `loop.py`, `oracle_interface.py` |
+| **C — Evaluation** | LLM-simulated oracle, metrics, ablation harness, human pilot | `sim_oracle.py`, `metrics.py`, `run_experiment.py` |
+
+The three modules connect through a single `State` object (current clustering, history, oracle constraints). Lock its schema in week 1, session 2.
+
+---
+
+## The five `f_*` functions (the system spec)
+
+Everything we build is one of these:
+
+- `f_output(state) → clustering` — best-guess clustering with names + descriptions.
+- `f_uncertainty(state) → ranking` — which points / clusters are least certain.
+- `f_next_best_step(state, strategy) → action` — pick: show full, show subset, ask question, stop.
+- `f_next_state(state, oracle_reply) → state` — apply feedback (split, merge, move, instruction).
+- `f_eval(state) → score` — internal self-assessment (cohesion / separation / oracle satisfaction signal).
+
+Start each as a naïve LLM prompt. Sharpen the ones that hurt most.
+
+---
+
+## Decisions to lock in week 1, session 1
+
+1. **Dataset.** Default: 20 Newsgroups, 5 categories, ~2k documents.
+2. **LLM.** Default: `claude-sonnet-4-6`. Watch token budget — clustering loops can be expensive.
+3. **Embedding model.** Default: `sentence-transformers/all-MiniLM-L6-v2`.
+4. **Feedback vocabulary.** What can the oracle say? Lock the grammar: `split(C)`, `merge(A, B)`, `move(x, → C)`, `instruct("...")`, `accept`, `reject`. Free-text is parsed into these.
+5. **Stopping rule.** Oracle says "accept", OR turn budget hit (default 15), OR feedback magnitude below threshold for 2 consecutive turns.
+6. **Simulated oracle persona.** What rules does the simulated oracle follow? Write a short spec (e.g., "prefers 4–6 clusters; cares about topic over sentiment").
+
+---
+
+## Week 1 — Foundation & state schema
+
+**Goal:** end-to-end "naïve" loop runs once. No strategies yet, no metrics.
+
+### Session 1 (1h) — Kickoff
+- Lock decisions 1–6 above.
+- Sketch `State` schema together (points, embeddings, current assignments, names, history, oracle constraints).
+- Decide CLI entry point shape: `python run.py --strategy random --oracle sim --turns 15`.
+
+### Session 2 (3h) — Build the skeleton
+- A: load dataset, compute embeddings, run k-means, write `f_output` (returns clustering with LLM-generated names).
+- B: write `f_next_state` for the simplest case — a hand-typed `merge(A, B)` actually merges. Wire the CLI loop.
+- C: write a *very* simple simulated oracle (always says "merge the two smallest clusters", then "accept"). Stub `metrics.py`.
+- Integration: at end of session, `run.py` produces a clustering, asks the sim oracle, applies feedback, prints the new clustering. Even if dumb, it must run end-to-end.
+
+### Async week 1 (per person, ~6h)
+- A: implement `f_uncertainty` (which points are nearest a boundary, which clusters have lowest cohesion).
+- B: extend `f_next_state` to handle `split`, `move`, and `instruct`. For `instruct`, pass the instruction as system context to subsequent LLM calls.
+- C: write the *real* simulated oracle. Give it a hidden preference (e.g., "5 clusters by topic"); it gives feedback that nudges toward that preference. Also: implement basic metrics (turns to convergence, oracle satisfaction proxy, feedback magnitude over time).
+
+**End-of-week deliverable:** runnable end-to-end loop with naïve strategy, simulated oracle with hidden preference, JSONL log per run.
+
+---
+
+## Week 2 — Three strategies
+
+**Goal:** the three `f_next_best_step` strategies all work and produce different behavior.
+
+### Session 1 (1h) — Strategy spec
+- Define each strategy precisely:
+  - **Random:** pick a random action (show full / show pair / ask boundary question).
+  - **Uncertainty-driven:** target the cluster or point with highest uncertainty from `f_uncertainty`.
+  - **Boundary-driven:** ask the oracle about the single point closest to a cluster boundary.
+- Decide how to display results to the oracle (text format only).
+
+### Session 2 (3h) — Implement strategies
+- B: implement all three strategies in `f_next_best_step`.
+- A: improve cluster naming so names are *stable* across turns (don't rename a cluster every iteration unless its content shifted ≥X%).
+- C: extend the simulated oracle to handle pairwise questions ("are x and y in the same group?") and boundary queries.
+- Integration: run all 3 strategies on the same dataset/oracle pair. Eyeball: do they actually differ?
+
+### Async week 2 (per person, ~6h)
+- A: tune cluster naming/description prompts so output is readable in a terminal.
+- B: handle contradictory feedback. If the oracle says "merge A,B" then later "A and B are too different", the latest wins, and we log the contradiction.
+- C: write `run_experiment.py`: runs N=10 seeds × 3 strategies × 1 dataset = 30 runs. Outputs a results CSV (turns to convergence, final oracle satisfaction, cognitive-load proxy = total tokens shown).
+
+**End-of-week deliverable:** all three strategies running; experiment harness producing a CSV; first plot of "turns to convergence by strategy".
+
+---
+
+## Week 3 — Experiments & human pilot
+
+**Goal:** main results table; small human validation.
+
+### Session 1 (1h) — Results readout #1
+- Look at the CSV. Are any strategies systematically faster? Are runs converging at all?
+- Common bug check: if the oracle reaches "accept" in 1–2 turns, the dataset is too easy or the oracle too lenient. Make it pickier.
+- Decide whether to bump N from 10 to 30 seeds for tighter CIs.
+
+### Session 2 (3h) — Human pilot
+- Each team member runs the system **once each** as a human oracle. Different starting seed each. Record the transcript.
+- C: extract metrics from the human runs. Compare to the simulated-oracle distribution (do humans hit a similar convergence pattern?).
+- A: based on human transcripts, identify the 1–2 places where the system felt frustrating. Fix the most painful one only.
+- B: same — fix one prompt that the humans clearly tripped over.
+
+### Async week 3 (per person, ~6h)
+- C: run final experiment. N=30 seeds × 3 strategies. Compute CIs (bootstrap). Build the headline plot.
+- A: clean up cluster naming/description to look good in screenshots for the report.
+- B: ensure runs are reproducible from a seed (this matters for the report).
+- All: recruit 2–3 *additional* humans (classmates, friends) for a 1-task each pilot. Goal: 5–6 human runs total.
+
+**End-of-week deliverable:** final results CSV; headline plot with CIs; 5–6 human transcripts.
+
+---
+
+## Week 4 — Writeup & presentation
+
+**Goal:** final report + presentation.
+
+### Session 1 (1h) — Results readout #2
+- Look at the human runs vs simulated-oracle runs side by side. State the honest comparison.
+- Agree on the headline claim. One sentence with a number and a CI.
+- Decide on each figure: keep, cut, or redo.
+
+### Session 2 (3h) — Writeup sprint
+- All in the same room writing their sections.
+- A: System (representation, clustering core, naming).
+- B: Conversation loop (the `f_*` design, feedback grammar, contradiction handling).
+- C: Evaluation (simulated oracle, ablation results, human pilot).
+- Joint: Intro, Discussion, Limitations, Future Work (the things we cut: hierarchy, generalization, web UI).
+- Last hour: read it aloud. Cut anything weak.
+
+### Async week 4 (per person, ~6h)
+- Polish, build slides, rehearse once.
+
+**End-of-week deliverable:** final report PDF + slide deck + tagged git release.
+
+---
+
+## Risks & cutlines
+
+| Risk | When it bites | Cut |
+|------|---------------|-----|
+| Loop never converges | Week 2 | Make simulated oracle more lenient. Or cap turn budget at 10. |
+| Strategies don't differ | Week 3 readout #1 | Honest finding. Report it. Don't fake a difference. |
+| LLM costs blow up | Week 2 | Cache every LLM call by input hash. Aggressive. |
+| Human pilot reveals UX is unusable | Week 3 | Drop human pilot to 2 people, lean entirely on simulated-oracle results, flag this as a limitation. |
+| Cluster names thrash every turn | Week 2 | Add a "rename only if content shifted ≥X%" rule. Already on the plan. |
+
+---
+
+## What we are NOT doing (and saying so explicitly in the report)
+
+- Web UI / persistent sessions
+- Hierarchy navigation
+- Multiple clustering backends (HDBSCAN, etc.)
+- UMAP / t-SNE visualization
+- Generalization-to-new-items test
+- Calibrated soft assignments (we use hard assignments only)
+- N≥10 within-subject human study
+- Multiple datasets
+
+Each of these is one bullet under "Future work."
+
+---
+
+## Definition of done
+
+- `python run.py --strategy {random,uncertainty,boundary} --oracle sim --seed N` runs end-to-end from a fresh checkout.
+- Results CSV with N=30 seeds × 3 strategies, plus 5–6 human transcripts.
+- One sentence with a number and a CI: "The boundary-driven strategy converges in X turns [bootstrap 95% CI: lo–hi], compared to Y turns for random."
+- 8–12 page report + presentation.
+- All five `f_*` functions documented with their prompt + a one-line description.

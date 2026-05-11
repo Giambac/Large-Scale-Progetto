@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Clustering Agent Debug UI</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Clustering Agent Debug UI</h1>
+    <div id="status-banner">Status: Idle</div>
+    <form id="upload-form" enctype="multipart/form-data">
+      <input type="file" name="file" id="file-input" accept=".csv,.jsonl">
+      <button type="submit">Upload Dataset</button>
+    </form>
+  </header>
+  <!-- VIZ-V2-01: Full-width UMAP projection panel (D-23) -->
+  <section class="projection-panel">
+    <h2 class="projection-title">2D Embedding Projection (UMAP)</h2>
+    <canvas id="projection-canvas" width="1200" height="300">
+      UMAP projection will appear here after dataset upload.
+    </canvas>
+  </section>
+  <main class="layout">
+    <!-- Left: cluster cards grid (UI-01) -->
+    <section id="cluster-cards" class="cluster-grid">
+      <p class="placeholder">Upload a dataset to start a session.</p>
+    </section>
+    <!-- Right: metrics sidebar (UI-01) -->
+    <aside id="metrics-sidebar">
+      <h2>Session Metrics</h2>
+      <div id="turn-index">Turn: &mdash;</div>
+      <div id="cognitive-load">Cognitive Load: &mdash;</div>
+      <h2>Conversation History</h2>
+      <ul id="history-list"></ul>
+      <!-- UI-V2-01: Sessions section (D-28) -->
+      <h2>Sessions</h2>
+      <ul id="sessions-list">
+        <li class="placeholder">No sessions yet.</li>
+      </ul>
+    </aside>
+  </main>
+  <!-- Flask-SocketIO client library served by Flask-SocketIO -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/static/main.js"></script>
+</body>
+</html>
