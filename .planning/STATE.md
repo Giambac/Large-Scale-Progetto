@@ -119,9 +119,9 @@ None.
 ## Session Continuity
 
 **Last session:** 2026-05-12
-**Stopped at:** Phase 3 complete — all 5 plans executed and verified (5/5 must-haves, 106 tests pass).
+**Stopped at:** Phase 3 UAT complete (9/10 pass, 1 minor pre-existing bug fixed). Ready to plan Phase 4.
 
-**To resume:** Run `/gsd-discuss-phase 4` to start Phase 4 (Judge Agent).
+**To resume:** Run `/gsd-plan-phase 4` to plan Phase 4 (Judge Agent).
 
 **Existing repo artifacts:**
 

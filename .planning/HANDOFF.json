@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "timestamp": "2026-05-12T14:30:00Z",
+  "timestamp": "2026-05-12T16:00:00Z",
   "phase": "4",
   "phase_name": "Judge Agent",
   "phase_dir": ".planning/phases/04-judge-agent",
@@ -9,11 +9,11 @@
   "total_tasks": 0,
   "status": "paused",
   "completed_tasks": [
-    {"id": 1, "name": "Phase 3: Oracle Agent — all 5 plans executed and verified", "status": "done", "commit": "d2d8033"}
+    {"id": 1, "name": "Phase 3: Oracle Agent — all 5 plans executed and verified (5/5 must-haves)", "status": "done", "commit": "f0b888c"},
+    {"id": 2, "name": "Phase 3 UAT — 9/10 pass, 1 minor pre-existing bug fixed (155 pass, 1 skip)", "status": "done", "commit": "85e5898"}
   ],
   "remaining_tasks": [
-    {"id": 2, "name": "Discuss Phase 4 (Judge Agent)", "status": "not_started"},
-    {"id": 3, "name": "Plan Phase 4", "status": "not_started"},
+    {"id": 3, "name": "Plan Phase 4 (Judge Agent)", "status": "not_started"},
     {"id": 4, "name": "Execute Phase 4", "status": "not_started"}
   ],
   "blockers": [],
@@ -21,9 +21,11 @@
   "decisions": [
     {"decision": "cognitive_load forwarded from loop into oracle.reply() (was dead code — CR-01 fix)", "rationale": "Loop should own the computation per ORC-03/D-06 architecture", "phase": "3"},
     {"decision": "events.jsonl sidecar for oracle_init/drift_event (not audit_log.jsonl)", "rationale": "load_audit_log() crashes on non-state records — Pitfall 5", "phase": "3"},
-    {"decision": "isinstance(oracle, OracleAgent) branch in run_conversation() for Phase 3 wiring", "rationale": "OracleProtocol.reply() lacks global_instructions and cognitive_load params — WR-04 is a known gap for Phase 4", "phase": "3"}
+    {"decision": "isinstance(oracle, OracleAgent) branch in run_conversation() for Phase 3 wiring", "rationale": "OracleProtocol.reply() lacks global_instructions and cognitive_load params — WR-04 is a known gap for Phase 4", "phase": "3"},
+    {"decision": "NoiseParams validation asserts live in OracleAgent.__init__, not NoiseParams dataclass", "rationale": "By design — plain dataclass, validation at agent construction boundary", "phase": "3"},
+    {"decision": "test_parse_feedback_real_llm import guard fixed + llm mark registered", "rationale": "import anthropic was before pytest.skip guard — moved after. pyproject.toml now registers llm mark.", "phase": "2-fix"}
   ],
   "uncommitted_files": [],
-  "next_action": "Run /gsd-discuss-phase 4 to gather context before planning the Judge Agent",
-  "context_notes": "Phase 3 complete and verified. Three non-blocking issues in REVIEW.md (WR-01 duplicate oracle_init, WR-02 merge contradiction detection gap, WR-04 stale OracleProtocol) can be addressed in Phase 4 or as a gap-closure if they affect Judge Agent integration."
+  "next_action": "Run /gsd-plan-phase 4 to plan the Judge Agent phase",
+  "context_notes": "Phase 3 fully done — UAT passed, pre-existing bug fixed, 155 tests pass (1 skipped). WR-04 (stale OracleProtocol.reply() signature) is the most likely REVIEW.md item to affect Phase 4 Judge Agent integration — the isinstance(oracle, OracleAgent) branch in run_conversation() will need to be resolved cleanly."
 }
