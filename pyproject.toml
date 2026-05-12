@@ -4,3 +4,4 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-q"
+markers = ["llm: integration tests requiring a real LLM client (skipped when ANTHROPIC_API_KEY is unset)"]

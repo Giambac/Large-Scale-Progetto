@@ -96,12 +96,12 @@ def test_parse_feedback_crashes_on_unknown_type(tiny_state_3cluster):
 @pytest.mark.llm
 def test_parse_feedback_real_llm(tiny_state_3cluster):
     """Integration test: parse_feedback with real Anthropic client (skipped in CI)."""
-    import anthropic
     import os
     from src.feedback_parser import parse_feedback
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         pytest.skip("ANTHROPIC_API_KEY not set")
+    import anthropic
     client = anthropic.Anthropic(api_key=key)
     deltas = parse_feedback("Split cluster 0 into two groups.", tiny_state_3cluster, client)
     assert isinstance(deltas, list)
