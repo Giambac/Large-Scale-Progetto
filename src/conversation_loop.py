@@ -10,12 +10,22 @@ GlobalFeedback accumulator (FB-01):
     delta, it appends instruction_text to this list in-place. The accumulated list is available
     for Phase 3 to pass to the ClusterNamer for prompt enrichment.
 
+Phase 3 additions:
+    - f_cognitive_load computed before oracle.reply() each turn (ORC-03, D-06)
+    - global_instructions passed to OracleAgent.reply() if oracle is an OracleAgent (FB-04, D-12)
+    - oracle_init event written to events.jsonl sidecar at run start (ORC-02, D-05)
+    - drift_event written to events.jsonl when reply.contradiction_detected is True (ORC-04, D-10)
+    - events.jsonl is a SEPARATE sidecar file from audit_log.jsonl (Pitfall 5 — never write
+      oracle_init/drift_event to audit_log.jsonl; load_audit_log() would crash on non-state records)
+
 Threading note: run_conversation() is designed to run in a background thread
 via socketio.start_background_task() (see web/app.py). When socketio is None,
 emit calls are skipped — useful for unit tests without a running Flask server.
 """
 from __future__ import annotations
 
+import json
+import os
 from typing import TYPE_CHECKING, Optional, Callable
 
 from src.agent_functions import f_output, f_next_best_step, f_next_state
@@ -57,6 +67,27 @@ def _format_message(action: object, state: ClusteringState) -> str:
         return f"Action: {action.action_type}"
 
 
+def _write_event(record: dict, events_path: str) -> None:
+    """
+    Append one JSON event record to the events sidecar file.
+
+    Used for oracle_init and drift_event records (Phase 3).
+    MUST NOT write to audit_log.jsonl — that file stores only ClusteringState lines
+    and load_audit_log() will crash on non-state records (Pitfall 5).
+
+    No try/except — fail loudly per CLAUDE.md.
+
+    Args:
+        record:      Plain dict, JSON-serializable (no numpy types).
+        events_path: Path to the events.jsonl sidecar file.
+    """
+    parent = os.path.dirname(events_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(events_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+
+
 def run_conversation(
     initial_state: ClusteringState,
     oracle: "OracleProtocol",
@@ -69,6 +100,7 @@ def run_conversation(
     id_to_text: dict[int, str] | None = None,
     llm_client: object | None = None,
     post_turn_callback: Optional[Callable] = None,  # (new_state, deltas) -> None
+    events_path: str | None = None,  # sidecar file for oracle_init + drift_event records (Phase 3)
 ) -> ClusteringState:
     """
     Plain Python while loop (D-01). Runs until a stopping condition fires.
@@ -86,16 +118,28 @@ def run_conversation(
         llm_client: Anthropic client for parse_feedback. None -> no parsing (deltas=[]).
         post_turn_callback: Optional callable (new_state, deltas) -> None. Called after
             each turn's AuditLog write. Used for projection recompute on split/merge (D-22).
+        events_path: Path for oracle_init + drift_event sidecar JSONL file (Phase 3).
+            None -> derived from log_path (same directory, filename events.jsonl).
+            MUST be a different file from log_path — audit_log.jsonl stores only state records.
 
     Returns:
         Final ClusteringState when the loop terminates.
     """
+    # Phase 3: ORC-03 — import f_cognitive_load at function body level, OUTSIDE the while loop.
+    # Do NOT import inside the loop body.
+    from src.cognitive_load import f_cognitive_load  # ORC-03: computed before oracle.reply()
+
     if criteria is None:
         criteria = StoppingCriteria()
     if strategy is None:
         strategy = RandomStrategy(seed=0)
     if id_to_text is None:
         id_to_text = {}
+
+    # Phase 3: Derive events sidecar path (Pitfall 5 — separate from audit_log.jsonl)
+    if events_path is None:
+        _events_dir = os.path.dirname(log_path) or "."
+        events_path = os.path.join(_events_dir, "events.jsonl")
 
     hierarchy = HierarchyStore()
     # Register all initial clusters in the hierarchy
@@ -104,6 +148,21 @@ def run_conversation(
 
     # FB-01: GlobalFeedback accumulator — persists across all turns in this session
     global_instructions: list[str] = []
+
+    # Phase 3: Write oracle_init event if oracle is an OracleAgent (ORC-02, D-05)
+    # Local import to avoid circular imports at module level.
+    from src.oracle_agent import OracleAgent as _OracleAgent  # local import — avoid circular
+    if isinstance(oracle, _OracleAgent):
+        _write_event({
+            "event": "oracle_init",
+            "turn": 0,
+            "timestamp": initial_state.timestamp,
+            "preferred_k": oracle.spec.preferred_k,
+            "semantic_axes": oracle.spec.semantic_axes,
+            "consistency_rate": oracle.noise_params.consistency_rate,
+            "drift_probability": oracle.noise_params.drift_probability,
+            "sycophancy_resistance": oracle.noise_params.sycophancy_resistance,
+        }, events_path)
 
     state = initial_state
     recent_magnitudes: list[float] = []
@@ -115,9 +174,16 @@ def run_conversation(
         # Step 2: Select action
         action = f_next_best_step(state, strategy, uncertainty_report)
 
-        # Step 3: Format message and get oracle reply
+        # Step 3a: Format message and compute per-turn cognitive load (Phase 3 — ORC-03, D-06)
+        # f_cognitive_load is imported at function body level (before while), not inside the loop.
         message = _format_message(action, state)
-        reply = oracle.reply(state, message)
+        cognitive_load = f_cognitive_load(state, message)
+
+        # Step 3b: Get oracle reply — pass global_instructions to OracleAgent if available (FB-04, D-12)
+        if isinstance(oracle, _OracleAgent):
+            reply = oracle.reply(state, message, global_instructions=global_instructions)
+        else:
+            reply = oracle.reply(state, message)
 
         # Step 4: Parse oracle reply into FeedbackDelta list
         # parse_feedback is the only permitted try/except boundary in Phase 2.
@@ -130,8 +196,28 @@ def run_conversation(
         # global_instructions is passed in; f_next_state appends GlobalFeedback text in-place (FB-01).
         new_state = f_next_state(state, deltas, store, namer, hierarchy, id_to_text, global_instructions)
 
+        # Step 5b: Update OracleAgent delta window and detect contradictions (Phase 3 — ORC-04, D-09)
+        # IMPORTANT: use new_state.turn_index (AFTER f_next_state), not state.turn_index.
+        # Modification B must run AFTER f_next_state so the turn_index stored in the deque
+        # and referenced in drift_event records reflects the turn that just completed.
+        if isinstance(oracle, _OracleAgent) and deltas:
+            contradiction_detected, contradicted_turn = oracle.update_delta_window(
+                deltas, new_state.turn_index
+            )
+            reply.contradiction_detected = contradiction_detected
+            reply.contradicted_turn = contradicted_turn
+
         # Step 6: Write AuditLog (D-04: loop owns the JSONL write)
         append_to_audit_log(new_state, log_path)
+
+        # Step 6c: Log drift event to events sidecar if contradiction detected (Phase 3 — ORC-04, D-10)
+        if reply.contradiction_detected:
+            _write_event({
+                "event": "drift_event",
+                "turn": new_state.turn_index,
+                "contradicted_turn": reply.contradicted_turn,
+                "timestamp": new_state.timestamp,
+            }, events_path)
 
         # Step 6b: Call post_turn_callback if provided (D-22: projection recompute hook)
         if post_turn_callback is not None:

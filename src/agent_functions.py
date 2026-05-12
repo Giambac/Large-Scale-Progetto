@@ -509,8 +509,8 @@ def f_next_state(
         elif isinstance(delta, MoveItemFeedback):
             current_state = _apply_move_item(delta, current_state, namer, id_to_text, global_instructions)
         elif isinstance(delta, InstructionalFeedback):
-            # InstructionalFeedback: structural storage in Phase 3.
-            pass
+            # FB-04: accumulate instruction in caller-owned list (Phase 3 — same pattern as GlobalFeedback)
+            global_instructions.append(delta.instruction_text)
         else:
             assert False, f"Unknown FeedbackDelta type: {type(delta)}"
 

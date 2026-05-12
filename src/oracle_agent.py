@@ -10,7 +10,7 @@ Key behaviors:
 - Noise parameters are prompt-injected behavioral rules (D-04).
 - oracle_init JSONL event written to events_path at construction time if provided (D-05 / ORC-02).
 - Provider-aware LLM call: Anthropic uses system= kwarg; OpenAI/Google adapters prepend to message.
-- contradiction_detected always False in Wave 1; Wave 2 (Plan 03) adds _check_contradiction() call.
+- contradiction_detected set by run_conversation() via update_delta_window() after parse_feedback (ORC-04).
 - try/except ONLY at the two LLM client.messages.create() call sites (CLAUDE.md fail-loudly rule).
 """
 from __future__ import annotations
@@ -96,9 +96,8 @@ class OracleAgent:
     Assembles a multi-section system prompt from spec, noise params, global instructions,
     current state summary, and cognitive load gate. Calls the injected LLM client.
 
-    Wave 2 (Plan 03) adds update_delta_window() for structural drift detection (ORC-04).
-    The conversation loop calls oracle.update_delta_window(deltas, turn_index) after
-    parse_feedback() to check new deltas against the rolling window and append them.
+    Full implementation with structural drift detection via _check_contradiction() and
+    update_delta_window() (ORC-04, D-09).
     """
 
     def __init__(
@@ -214,10 +213,7 @@ class OracleAgent:
     def _check_contradiction(
         self, delta, current_turn: int
     ) -> tuple[bool, int | None]:
-        """Compare delta against the rolling window of prior structural deltas.
-
-        Returns (True, prior_turn_index) if a contradiction is found;
-        (False, None) if no contradiction.
+        """Compare delta against rolling window. Returns (contradicted, prior_turn).
 
         Does NOT mutate the window — call update_delta_window() to add deltas.
         """
@@ -229,30 +225,27 @@ class OracleAgent:
     def update_delta_window(
         self, deltas: list, turn_index: int
     ) -> tuple[bool, int | None]:
-        """Check new deltas for contradictions against the rolling window, then append
-        structural deltas to the window.
+        """Check new deltas for contradictions against the rolling window, then
+        append structural deltas to the window.
 
-        Called by run_conversation() after parse_feedback() returns deltas (D-09 / ORC-04).
-
-        The check runs BEFORE appending so that deltas within the same turn do not
-        contradict each other (same-turn deltas are all new; no prior context for them).
-
-        GlobalFeedback and InstructionalFeedback are skipped for both checking and
-        appending — they are structurally opaque (D-09).
+        Called by run_conversation() after parse_feedback() returns deltas (ORC-04, D-09).
 
         Args:
-            deltas: List of FeedbackDelta objects parsed from the current oracle reply.
-            turn_index: The turn index of the current oracle reply.
+            deltas:     List of FeedbackDelta objects from parse_feedback().
+            turn_index: The turn_index of the state AFTER f_next_state (new_state.turn_index).
+                        MUST use new_state.turn_index, not state.turn_index (off-by-one guard).
 
         Returns:
             (contradiction_detected, contradicted_turn) — first contradiction found,
-            or (False, None) if none.
+            or (False, None) if no contradiction detected.
         """
         from src.feedback import GlobalFeedback, InstructionalFeedback
 
         first_contradiction: bool = False
         first_contradicted_turn: int | None = None
 
+        # Check for contradictions BEFORE appending (so current turn's deltas
+        # don't contradict each other within the same turn)
         for delta in deltas:
             if isinstance(delta, (GlobalFeedback, InstructionalFeedback)):
                 continue  # ignored for structural comparison (D-09)
@@ -262,8 +255,7 @@ class OracleAgent:
                 first_contradiction = True
                 first_contradicted_turn = prior_turn
 
-        # Append structural deltas to window AFTER checking (so this turn's deltas
-        # don't contradict each other within the same turn)
+        # Append structural deltas to window AFTER checking
         for delta in deltas:
             if not isinstance(delta, (GlobalFeedback, InstructionalFeedback)):
                 self._delta_window.append((turn_index, delta))
@@ -332,12 +324,9 @@ class OracleAgent:
         raw_text = response.content[0].text
         satisfied = "[SATISFIED]" in raw_text
 
-        # Drift detection (ORC-04): the conversation loop calls
-        # oracle.update_delta_window(deltas, turn_index) AFTER parse_feedback() returns
-        # the parsed FeedbackDelta objects. OracleReply.contradiction_detected is set
-        # by the loop from the return value of update_delta_window() (Wave 3 wiring).
-        # reply() itself always returns contradiction_detected=False here; the loop
-        # overwrites the field after calling update_delta_window().
+        # contradiction_detected and contradicted_turn are set by run_conversation()
+        # after calling update_delta_window() with parsed deltas (ORC-04, D-09).
+        # reply() itself does not have access to parsed deltas (they aren't available yet).
 
         return OracleReply(
             raw_text=raw_text,
