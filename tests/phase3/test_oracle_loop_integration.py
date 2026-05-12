@@ -99,8 +99,11 @@ def test_drift_event_logged(oracle_agent_factory, tmp_path):
     """ORC-04: drift_event is written to events.jsonl when contradiction detected.
 
     Uses a MagicMock llm_client to drive parse_feedback to produce a SplitFeedback
-    delta. The oracle agent's delta window is pre-seeded with a MergeFeedback on
-    cluster 0, so the next SplitFeedback(cluster_id=0) will be a contradiction.
+    delta on turn 1. The oracle agent's delta window is pre-seeded with a MergeFeedback on
+    cluster 0, so the SplitFeedback(cluster_id=0) will be a contradiction.
+
+    The mock llm_client returns the SplitFeedback payload only on the FIRST parse_feedback
+    call, then returns [] for subsequent turns (to avoid invalid cluster_id on turn 2+).
 
     Verifies that after the contradiction turn, events.jsonl contains a drift_event.
     """
@@ -114,16 +117,26 @@ def test_drift_event_logged(oracle_agent_factory, tmp_path):
     oracle = oracle_agent_factory(reply_text="please split cluster 0")
 
     # Pre-seed the delta window with a MergeFeedback(0, 1) at turn 0
-    # so that a SplitFeedback(0) on the next turn triggers a contradiction
+    # so that a SplitFeedback(cluster_id=0) on turn 1 triggers a contradiction
     oracle._delta_window.append((0, MergeFeedback(cluster_a_id=0, cluster_b_id=1)))
 
-    # Mock an llm_client that returns a SplitFeedback payload to parse_feedback
-    # parse_feedback result: SplitFeedback(cluster_id=0, seed_item_ids=[0])
-    split_payload = json.dumps([{"type": "split", "cluster_id": 0, "seed_item_ids": [0]}])
-    mock_response = MagicMock()
-    mock_response.content = [MagicMock(text=split_payload)]
+    # Mock an llm_client that returns SplitFeedback payload ONLY on first call,
+    # then returns empty list to avoid invalid cluster_id errors on subsequent turns.
+    call_count = [0]
+    def mock_create(**kwargs):
+        call_count[0] += 1
+        mock_resp = MagicMock()
+        if call_count[0] == 1:
+            # Turn 1: SplitFeedback(cluster_id=0) — contradicts MergeFeedback(0,1) in window
+            split_payload = json.dumps([{"type": "split", "cluster_id": 0, "seed_item_ids": [0]}])
+            mock_resp.content = [MagicMock(text=split_payload)]
+        else:
+            # Subsequent turns: no feedback (avoid invalid cluster_id after split)
+            mock_resp.content = [MagicMock(text="[]")]
+        return mock_resp
+
     mock_llm_client = MagicMock()
-    mock_llm_client.messages.create.return_value = mock_response
+    mock_llm_client.messages.create.side_effect = mock_create
 
     log_path = str(tmp_path / "audit_log.jsonl")
     events_path = str(tmp_path / "events.jsonl")
@@ -135,7 +148,7 @@ def test_drift_event_logged(oracle_agent_factory, tmp_path):
         namer=namer,
         strategy=None,
         log_path=log_path,
-        criteria=StoppingCriteria(turn_budget=2),
+        criteria=StoppingCriteria(turn_budget=3),
         socketio=None,
         llm_client=mock_llm_client,
         events_path=events_path,
