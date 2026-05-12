@@ -96,7 +96,9 @@ class OracleAgent:
     Assembles a multi-section system prompt from spec, noise params, global instructions,
     current state summary, and cognitive load gate. Calls the injected LLM client.
 
-    Wave 1 implementation. Wave 2 (Plan 03) adds _check_contradiction() call in reply().
+    Wave 2 (Plan 03) adds update_delta_window() for structural drift detection (ORC-04).
+    The conversation loop calls oracle.update_delta_window(deltas, turn_index) after
+    parse_feedback() to check new deltas against the rolling window and append them.
     """
 
     def __init__(
@@ -212,15 +214,61 @@ class OracleAgent:
     def _check_contradiction(
         self, delta, current_turn: int
     ) -> tuple[bool, int | None]:
-        """Compare delta against rolling window. Returns (contradicted, prior_turn).
+        """Compare delta against the rolling window of prior structural deltas.
 
-        Wave 1: callable but _delta_window is not populated by reply() yet.
-        Wave 2 (Plan 03) will call this from reply() after parse_feedback.
+        Returns (True, prior_turn_index) if a contradiction is found;
+        (False, None) if no contradiction.
+
+        Does NOT mutate the window — call update_delta_window() to add deltas.
         """
         for prior_turn, prior_delta in self._delta_window:
             if _contradicts(delta, prior_delta):
                 return True, prior_turn
         return False, None
+
+    def update_delta_window(
+        self, deltas: list, turn_index: int
+    ) -> tuple[bool, int | None]:
+        """Check new deltas for contradictions against the rolling window, then append
+        structural deltas to the window.
+
+        Called by run_conversation() after parse_feedback() returns deltas (D-09 / ORC-04).
+
+        The check runs BEFORE appending so that deltas within the same turn do not
+        contradict each other (same-turn deltas are all new; no prior context for them).
+
+        GlobalFeedback and InstructionalFeedback are skipped for both checking and
+        appending — they are structurally opaque (D-09).
+
+        Args:
+            deltas: List of FeedbackDelta objects parsed from the current oracle reply.
+            turn_index: The turn index of the current oracle reply.
+
+        Returns:
+            (contradiction_detected, contradicted_turn) — first contradiction found,
+            or (False, None) if none.
+        """
+        from src.feedback import GlobalFeedback, InstructionalFeedback
+
+        first_contradiction: bool = False
+        first_contradicted_turn: int | None = None
+
+        for delta in deltas:
+            if isinstance(delta, (GlobalFeedback, InstructionalFeedback)):
+                continue  # ignored for structural comparison (D-09)
+
+            detected, prior_turn = self._check_contradiction(delta, turn_index)
+            if detected and not first_contradiction:
+                first_contradiction = True
+                first_contradicted_turn = prior_turn
+
+        # Append structural deltas to window AFTER checking (so this turn's deltas
+        # don't contradict each other within the same turn)
+        for delta in deltas:
+            if not isinstance(delta, (GlobalFeedback, InstructionalFeedback)):
+                self._delta_window.append((turn_index, delta))
+
+        return first_contradiction, first_contradicted_turn
 
     def reply(
         self,
@@ -284,7 +332,12 @@ class OracleAgent:
         raw_text = response.content[0].text
         satisfied = "[SATISFIED]" in raw_text
 
-        # Phase 3 Wave 2: _check_contradiction() and _delta_window update will be added here.
+        # Drift detection (ORC-04): the conversation loop calls
+        # oracle.update_delta_window(deltas, turn_index) AFTER parse_feedback() returns
+        # the parsed FeedbackDelta objects. OracleReply.contradiction_detected is set
+        # by the loop from the return value of update_delta_window() (Wave 3 wiring).
+        # reply() itself always returns contradiction_detected=False here; the loop
+        # overwrites the field after calling update_delta_window().
 
         return OracleReply(
             raw_text=raw_text,
