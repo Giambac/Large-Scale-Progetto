@@ -4,6 +4,10 @@ oracle_protocol.py — OracleProtocol interface, OracleReply, MockOracle scripte
 Phase 3 replaces MockOracle without changing the loop.
 The OracleProtocol is a typing.Protocol so Phase 3's real Oracle Agent requires no inheritance;
 structural subtyping via isinstance check works because OracleProtocol is @runtime_checkable.
+
+Phase 3 OracleReply extension: OracleReply gains contradiction_detected and contradicted_turn
+fields for drift detection (ORC-04). Both fields have defaults so existing MockOracle callers
+require no changes.
 """
 from __future__ import annotations
 
@@ -21,12 +25,16 @@ class OracleReply:
     raw_text:          Natural-language response from the oracle.
     satisfied:         Explicit satisfaction token — the primary stop condition (D-08).
     turn_cognitive_load: Phase 3 fills this in; Phase 2 MockOracle always returns 0.0.
+    contradiction_detected / contradicted_turn: Phase 3 drift detection fields.
+        Both have defaults so MockOracle callers require no changes.
 
     NOT frozen — Phase 3 may add fields without breaking existing callers.
     """
     raw_text: str
     satisfied: bool
     turn_cognitive_load: float = 0.0  # Phase 3 fills this in; Phase 2 stub = 0.0
+    contradiction_detected: bool = False     # Phase 3: True if structural contradiction detected
+    contradicted_turn: int | None = None     # Phase 3: turn_index of the conflicting prior delta
 
 
 @runtime_checkable

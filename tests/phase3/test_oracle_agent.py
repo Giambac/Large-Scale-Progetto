@@ -13,51 +13,46 @@ def _make_oracle_client(reply_text: str = "looks good to me"):
 
 
 def test_oracle_agent_satisfies_protocol(tiny_state_3cluster):
-    """OracleAgent is an instance of OracleProtocol (structural subtyping)."""
+    """ORC-01: OracleAgent is a structural subtype of OracleProtocol."""
     from src.oracle_protocol import OracleProtocol
     from src.oracle_agent import OracleAgent, OracleSpec, NoiseParams
     spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="x")
-    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1,
-                        sycophancy_resistance=0.9)
-    agent = OracleAgent(spec=spec, noise_params=noise, client=_make_oracle_client())
+    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1, sycophancy_resistance=0.9)
+    agent = OracleAgent(spec=spec, noise_params=noise, client=MagicMock())
     assert isinstance(agent, OracleProtocol)
 
 
 def test_reply_returns_oracle_reply(tiny_state_3cluster):
-    """agent.reply(state, msg) returns OracleReply with non-empty raw_text."""
+    """ORC-01: reply() returns OracleReply with non-empty raw_text when mock client returns text."""
     from src.oracle_agent import OracleAgent, OracleSpec, NoiseParams
     from src.oracle_protocol import OracleReply
-    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="x")
-    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1,
-                        sycophancy_resistance=0.9)
-    agent = OracleAgent(spec=spec, noise_params=noise,
-                        client=_make_oracle_client("some non-empty reply"))
-    result = agent.reply(tiny_state_3cluster, "show me the clusters")
+    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="analyst")
+    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1, sycophancy_resistance=0.9)
+    client = _make_oracle_client("These clusters look reasonable.")
+    agent = OracleAgent(spec=spec, noise_params=noise, client=client)
+    result = agent.reply(tiny_state_3cluster, "How does the clustering look?")
     assert isinstance(result, OracleReply)
-    assert len(result.raw_text) > 0, "OracleReply.raw_text must be non-empty"
+    assert result.raw_text == "These clusters look reasonable."
 
 
 def test_oracle_spec_fields(tiny_state_3cluster):
-    """OracleSpec fields are accessible from the constructed OracleAgent."""
+    """ORC-01: OracleSpec fields are accessible via agent.spec property."""
     from src.oracle_agent import OracleAgent, OracleSpec, NoiseParams
-    spec = OracleSpec(preferred_k=3, semantic_axes=["topic", "tone"],
-                      persona_description="A neutral test analyst.")
-    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1,
-                        sycophancy_resistance=0.9)
-    agent = OracleAgent(spec=spec, noise_params=noise, client=_make_oracle_client())
+    spec = OracleSpec(preferred_k=3, semantic_axes=["topic", "sentiment"], persona_description="expert")
+    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1, sycophancy_resistance=0.9)
+    agent = OracleAgent(spec=spec, noise_params=noise, client=MagicMock())
     assert agent.spec.preferred_k == 3
     assert len(agent.spec.semantic_axes) > 0
     assert isinstance(agent.spec.persona_description, str)
 
 
 def test_oracle_init_logged(tmp_path):
-    """OracleAgent.__init__ writes an oracle_init event to events_path."""
+    """ORC-02: OracleAgent.__init__ writes oracle_init event when events_path provided."""
     from pathlib import Path
     from src.oracle_agent import OracleAgent, OracleSpec, NoiseParams
     events_path = tmp_path / "events.jsonl"
     spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="tester")
-    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1,
-                        sycophancy_resistance=0.9)
+    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1, sycophancy_resistance=0.9)
     OracleAgent(spec=spec, noise_params=noise, client=_make_oracle_client(),
                 events_path=events_path)
     assert events_path.exists(), "events_path file not created by OracleAgent.__init__"
@@ -67,129 +62,110 @@ def test_oracle_init_logged(tmp_path):
 
 
 def test_noise_params_in_prompt(tiny_state_3cluster):
-    """_build_system_prompt includes str(int(noise.consistency_rate * 100)) in output."""
+    """ORC-02: NoiseParams appear in assembled system prompt as percentages."""
     from src.oracle_agent import OracleAgent, OracleSpec, NoiseParams
-    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1,
-                        sycophancy_resistance=0.9)
-    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="x")
-    agent = OracleAgent(spec=spec, noise_params=noise, client=_make_oracle_client())
+    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1, sycophancy_resistance=0.9)
+    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="analyst")
+    agent = OracleAgent(spec=spec, noise_params=noise, client=MagicMock())
     prompt = agent._build_system_prompt(tiny_state_3cluster, 0.3, [])
-    # consistency_rate=0.8 → str(int(0.8 * 100)) == "80"
-    assert str(int(noise.consistency_rate * 100)) in prompt, \
-        f"consistency_rate percentage not found in prompt: {prompt[:200]}"
+    assert str(int(noise.consistency_rate * 100)) in prompt
 
 
 def test_overload_prompt_injected(tiny_state_3cluster):
-    """_build_system_prompt with load=0.8 contains 'OVERLOAD' warning."""
+    """ORC-03: OVERLOAD instruction appears in system prompt when load > 0.7."""
     from src.oracle_agent import OracleAgent, OracleSpec, NoiseParams
-    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="x")
-    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1,
-                        sycophancy_resistance=0.9)
-    agent = OracleAgent(spec=spec, noise_params=noise, client=_make_oracle_client())
+    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="analyst")
+    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1, sycophancy_resistance=0.9)
+    agent = OracleAgent(spec=spec, noise_params=noise, client=MagicMock())
     prompt = agent._build_system_prompt(tiny_state_3cluster, 0.8, [])
-    assert "OVERLOAD" in prompt, \
-        f"Expected 'OVERLOAD' in prompt for load=0.8, but not found: {prompt[:300]}"
+    assert "OVERLOAD" in prompt
 
 
 def test_no_overload_below_threshold(tiny_state_3cluster):
-    """_build_system_prompt with load=0.5 does NOT contain 'OVERLOAD'."""
+    """ORC-03: OVERLOAD instruction is absent when load <= 0.7."""
     from src.oracle_agent import OracleAgent, OracleSpec, NoiseParams
-    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="x")
-    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1,
-                        sycophancy_resistance=0.9)
-    agent = OracleAgent(spec=spec, noise_params=noise, client=_make_oracle_client())
+    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="analyst")
+    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1, sycophancy_resistance=0.9)
+    agent = OracleAgent(spec=spec, noise_params=noise, client=MagicMock())
     prompt = agent._build_system_prompt(tiny_state_3cluster, 0.5, [])
-    assert "OVERLOAD" not in prompt, \
-        f"'OVERLOAD' should NOT appear in prompt for load=0.5, but found: {prompt[:300]}"
+    assert "OVERLOAD" not in prompt
 
 
 def test_contradiction_merge_after_split(tiny_state_3cluster):
-    """MergeFeedback(A,B) after SplitFeedback(A) is detected as a contradiction."""
+    """ORC-04: MergeFeedback(A,B) contradicts prior SplitFeedback(cluster_id=A)."""
     from src.oracle_agent import OracleAgent, OracleSpec, NoiseParams
     from src.feedback import SplitFeedback, MergeFeedback
-    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="x")
-    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1,
-                        sycophancy_resistance=0.9)
-    agent = OracleAgent(spec=spec, noise_params=noise, client=_make_oracle_client())
-    # Append a SplitFeedback on cluster_id=0 at turn 1
-    prior_split = SplitFeedback(cluster_id=0, seed_item_ids=[])
-    agent._delta_window.append((1, prior_split))
-    # Now check contradiction: MergeFeedback(cluster_a_id=0, cluster_b_id=1) at turn 2
-    merge = MergeFeedback(cluster_a_id=0, cluster_b_id=1)
-    contradicted, prior_turn = agent._check_contradiction(merge, current_turn=2)
-    assert contradicted is True, "MergeFeedback(0,1) after SplitFeedback(0) should be a contradiction"
-    assert prior_turn is not None, "prior_turn should be set when contradiction is detected"
+    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="analyst")
+    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1, sycophancy_resistance=0.9)
+    agent = OracleAgent(spec=spec, noise_params=noise, client=MagicMock())
+    # Append a prior SplitFeedback(cluster_id=0) at turn 1
+    agent._delta_window.append((1, SplitFeedback(cluster_id=0, seed_item_ids=[])))
+    # MergeFeedback(0, 1) at turn 2 should contradict the prior SplitFeedback(0)
+    contradicted, prior_turn = agent._check_contradiction(
+        MergeFeedback(cluster_a_id=0, cluster_b_id=1), current_turn=2
+    )
+    assert contradicted is True
+    assert prior_turn == 1
 
 
 def test_contradiction_move_item(tiny_state_3cluster):
-    """MoveItemFeedback(item=0, target=2) after MoveItemFeedback(item=0, target=1) is contradiction."""
+    """ORC-04: MoveItemFeedback(item, B) contradicts prior MoveItemFeedback(item, C) where C != B."""
     from src.oracle_agent import OracleAgent, OracleSpec, NoiseParams
     from src.feedback import MoveItemFeedback
-    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="x")
-    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1,
-                        sycophancy_resistance=0.9)
-    agent = OracleAgent(spec=spec, noise_params=noise, client=_make_oracle_client())
-    # Append first MoveItemFeedback(item_id=0, target_cluster_id=1) at turn 1
-    prior_move = MoveItemFeedback(item_id=0, target_cluster_id=1)
-    agent._delta_window.append((1, prior_move))
-    # Now check contradiction: same item moved to different cluster at turn 3
-    new_move = MoveItemFeedback(item_id=0, target_cluster_id=2)
-    contradicted, prior_turn = agent._check_contradiction(new_move, current_turn=3)
-    assert contradicted is True, "Moving item 0 to cluster 2 after moving it to cluster 1 should be contradiction"
-    assert prior_turn == 1, f"prior_turn should be 1, got {prior_turn}"
+    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="analyst")
+    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1, sycophancy_resistance=0.9)
+    agent = OracleAgent(spec=spec, noise_params=noise, client=MagicMock())
+    agent._delta_window.append((1, MoveItemFeedback(item_id=0, target_cluster_id=1)))
+    contradicted, prior_turn = agent._check_contradiction(
+        MoveItemFeedback(item_id=0, target_cluster_id=2), current_turn=3
+    )
+    assert contradicted is True
+    assert prior_turn == 1
 
 
 def test_no_contradiction_empty_window(tiny_state_3cluster):
-    """Fresh agent with empty delta window returns (False, None) for any delta."""
+    """ORC-04: fresh agent with empty window returns (False, None)."""
     from src.oracle_agent import OracleAgent, OracleSpec, NoiseParams
     from src.feedback import MergeFeedback
-    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="x")
-    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1,
-                        sycophancy_resistance=0.9)
-    agent = OracleAgent(spec=spec, noise_params=noise, client=_make_oracle_client())
-    assert len(agent._delta_window) == 0, "Window should be empty for fresh agent"
-    delta = MergeFeedback(cluster_a_id=0, cluster_b_id=1)
-    contradicted, prior_turn = agent._check_contradiction(delta, current_turn=1)
-    assert contradicted is False, "Empty window should never produce contradiction"
-    assert prior_turn is None, "prior_turn should be None when no contradiction"
+    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="analyst")
+    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1, sycophancy_resistance=0.9)
+    agent = OracleAgent(spec=spec, noise_params=noise, client=MagicMock())
+    contradicted, prior_turn = agent._check_contradiction(
+        MergeFeedback(cluster_a_id=0, cluster_b_id=1), current_turn=1
+    )
+    assert contradicted is False
+    assert prior_turn is None
 
 
 def test_no_false_positive_contradiction(tiny_state_3cluster):
-    """SplitFeedback(A) then SplitFeedback(A) is NOT a contradiction (same operation)."""
+    """ORC-04: Two SplitFeedback on same cluster is NOT a contradiction."""
     from src.oracle_agent import OracleAgent, OracleSpec, NoiseParams
     from src.feedback import SplitFeedback
-    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="x")
-    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1,
-                        sycophancy_resistance=0.9)
-    agent = OracleAgent(spec=spec, noise_params=noise, client=_make_oracle_client())
-    prior_split = SplitFeedback(cluster_id=0, seed_item_ids=[])
-    agent._delta_window.append((1, prior_split))
-    # Same operation on same cluster — NOT a contradiction
-    new_split = SplitFeedback(cluster_id=0, seed_item_ids=[1])
-    contradicted, prior_turn = agent._check_contradiction(new_split, current_turn=2)
-    assert contradicted is False, \
-        "SplitFeedback(0) after SplitFeedback(0) should NOT be a contradiction"
+    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="analyst")
+    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1, sycophancy_resistance=0.9)
+    agent = OracleAgent(spec=spec, noise_params=noise, client=MagicMock())
+    agent._delta_window.append((1, SplitFeedback(cluster_id=0, seed_item_ids=[])))
+    contradicted, prior_turn = agent._check_contradiction(
+        SplitFeedback(cluster_id=0, seed_item_ids=[]), current_turn=2
+    )
+    assert contradicted is False
     assert prior_turn is None
 
 
 def test_global_instructions_in_prompt(tiny_state_3cluster):
-    """_build_system_prompt includes global_instructions content in the output."""
+    """FB-04: global_instructions content appears in oracle system prompt."""
     from src.oracle_agent import OracleAgent, OracleSpec, NoiseParams
-    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="x")
-    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1,
-                        sycophancy_resistance=0.9)
-    agent = OracleAgent(spec=spec, noise_params=noise, client=_make_oracle_client())
-    global_instructions = ["keep clusters small"]
-    prompt = agent._build_system_prompt(tiny_state_3cluster, 0.3, global_instructions)
-    assert "keep clusters small" in prompt, \
-        f"global_instructions not found in prompt: {prompt[:300]}"
+    spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="analyst")
+    noise = NoiseParams(consistency_rate=0.8, drift_probability=0.1, sycophancy_resistance=0.9)
+    agent = OracleAgent(spec=spec, noise_params=noise, client=MagicMock())
+    prompt = agent._build_system_prompt(tiny_state_3cluster, 0.3, ["keep clusters small"])
+    assert "keep clusters small" in prompt
 
 
 def test_oracle_agent_crashes_on_invalid_noise_params():
-    """NoiseParams with consistency_rate > 1.0 causes AssertionError on OracleAgent construction."""
+    """ORC-02: NoiseParams values outside [0,1] raise AssertionError at construction."""
     from src.oracle_agent import OracleAgent, OracleSpec, NoiseParams
     spec = OracleSpec(preferred_k=3, semantic_axes=["topic"], persona_description="x")
-    bad_noise = NoiseParams(consistency_rate=1.5, drift_probability=0.1,
-                            sycophancy_resistance=0.9)
+    bad_noise = NoiseParams(consistency_rate=1.5, drift_probability=0.1, sycophancy_resistance=0.9)
     with pytest.raises(AssertionError):
         OracleAgent(spec=spec, noise_params=bad_noise, client=MagicMock())
