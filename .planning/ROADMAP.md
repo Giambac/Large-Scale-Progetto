@@ -14,7 +14,7 @@
 
 - [x] **Phase 1: Pre-Code Obligations and Foundation** — COMPLETE
 - [x] **Phase 2: Clustering Agent Core** — Conversational loop, f_* functions, feedback types, hierarchy, web UI, multiple backends, UMAP projection, persistent sessions — COMPLETE 2026-05-10
-- [ ] **Phase 3: Oracle Agent** — Configurable LLM oracle with noise, cognitive load, drift detection
+- [x] **Phase 3: Oracle Agent** — Configurable LLM oracle with noise, cognitive load, drift detection — COMPLETE 2026-05-12
 - [ ] **Phase 4: Judge Agent** — Convergence detection, per-turn metrics, no-dialogue baseline, database
 - [ ] **Phase 5: Ablation Harness and Strategies** — 3 strategies, N×M experiment runner, bootstrap CI
 - [ ] **Phase 6: Generalization and Human Validation** — Mapping function, held-out evaluation, human study N≥10
@@ -71,10 +71,17 @@
 
 ---
 
-### Phase 3: Oracle Agent
+### ✅ Phase 3: Oracle Agent — COMPLETE 2026-05-12
 **Goal:** The LLM Oracle Agent behaves as a configurable, measurable stand-in for a human — with noise, cognitive fatigue, and drift — in a way that supports comparison with real humans in Phase 6
 **Depends on:** Phase 2
-**Target:** week 2
+**Completed:** 2026-05-12 — all 5 plans done
+
+**Delivered:**
+- src/oracle_agent.py — OracleAgent, OracleSpec, NoiseParams; satisfies OracleProtocol via structural subtyping
+- src/cognitive_load.py — f_cognitive_load pure function; COG_LOAD_THRESHOLD=0.7; OVERLOAD injected into prompt above threshold
+- Drift detection — update_delta_window() + _contradicts(); deque(maxlen=10) delta window; contradiction_detected/contradicted_turn on OracleReply
+- Loop integration — cognitive_load forwarded from run_conversation() into oracle.reply(); global_instructions (FB-04) forwarded each turn; oracle_init + drift_event to events.jsonl sidecar
+- 21 Phase 3 tests green (106 total including Phase 2)
 
 **v1 Requirements:**
 - ORC-01: structured OracleReply objects, not bare text
@@ -173,7 +180,7 @@
 |-------|--------|-------------|
 | 1. Pre-Code Obligations and Foundation | ✅ COMPLETE | — |
 | 2. Clustering Agent Core | ✅ COMPLETE — v1 + BACK-V2-01 + VIZ-V2-01 + UI-V2-01 all done (2026-05-10) | 1–2 |
-| 3. Oracle Agent | ⬜ Not started | 2 |
+| 3. Oracle Agent | ✅ COMPLETE — ORC-01..04 + FB-04 all done (2026-05-12) | 2 |
 | 4. Judge Agent | ⬜ Not started | 2–3 |
 | 5. Ablation Harness and Strategies | ⬜ Not started | 3 |
 | 6. Generalization and Human Validation | ⬜ Not started | 3–4 |
@@ -204,11 +211,11 @@
 | BACK-V2-01 | Phase 2 ✅ | Multiple backends |
 | VIZ-V2-01 | Phase 2 ✅ | UMAP/t-SNE |
 | UI-V2-01 | Phase 2 ✅ | Persistent sessions |
-| ORC-01 | Phase 3 | Oracle Agent |
-| ORC-02 | Phase 3 | Oracle Agent |
-| ORC-03 | Phase 3 | Oracle Agent |
-| ORC-04 | Phase 3 | Oracle Agent |
-| FB-04 | Phase 3 | Feedback |
+| ORC-01 | Phase 3 ✅ | Oracle Agent |
+| ORC-02 | Phase 3 ✅ | Oracle Agent |
+| ORC-03 | Phase 3 ✅ | Oracle Agent |
+| ORC-04 | Phase 3 ✅ | Oracle Agent |
+| FB-04 | Phase 3 ✅ | Feedback |
 | DB-01 | Phase 4 | Database |
 | DB-02 | Phase 4 | Database |
 | DB-03 | Phase 4 | Database |
