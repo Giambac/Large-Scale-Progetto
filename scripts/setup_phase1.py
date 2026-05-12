@@ -85,15 +85,9 @@ def main() -> None:
             "Run src/data_loader.py and src/embedding_store.py first."
         )
 
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    google_key = os.environ.get("GOOGLE_API_KEY", "")
-    openai_key = os.environ.get("OPENAI_API_KEY", "")
-    assert anthropic_key or google_key or openai_key, (
-        "No LLM API key found. Set one of:\n"
-        "  $env:ANTHROPIC_API_KEY='sk-ant-...'   (Anthropic / Claude)\n"
-        "  $env:GOOGLE_API_KEY='...'              (Google AI Studio / Gemini)\n"
-        "  $env:OPENAI_API_KEY='sk-...'           (OpenAI)"
-    )
+    from src.llm_key import resolve_llm_key
+    provider, _ = resolve_llm_key()  # asserts loudly if no key found
+    print(f"      Using LLM provider: {provider}")
 
     # Step 1: Verify held-out hash (crashes on mismatch)
     print("[1/5] Verifying held-out split integrity...")

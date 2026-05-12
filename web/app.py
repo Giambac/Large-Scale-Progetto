@@ -344,18 +344,23 @@ def _run_conversation_background(records: list[dict], log_path: str) -> None:
     """
     import numpy as np
 
-    from src.cluster_naming import AnthropicClusterNamer
+    from src.cluster_naming import AnthropicClusterNamer, GoogleClusterNamer, OpenAIClusterNamer
     from src.clustering import HDBSCANBackend, KMeansBackend, build_initial_clustering_state
     from src.conversation_loop import run_conversation
     from src.embedding_store import EmbeddingStore
+    from src.llm_key import resolve_llm_key
     from src.oracle_protocol import MockOracle, OracleReply
     from src.stopping import StoppingCriteria
-    import anthropic
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    assert api_key, "ANTHROPIC_API_KEY environment variable not set"
-    client = anthropic.Anthropic(api_key=api_key)
-    namer = AnthropicClusterNamer(client)
+    provider, api_key = resolve_llm_key()
+    if provider == "anthropic":
+        import anthropic
+        namer = AnthropicClusterNamer(anthropic.Anthropic(api_key=api_key))
+    elif provider == "openai":
+        namer = OpenAIClusterNamer(api_key=api_key)
+    else:
+        assert provider == "google"
+        namer = GoogleClusterNamer(api_key=api_key)
 
     # Create session directory (D-26)
     session_ts = _make_session_timestamp()
