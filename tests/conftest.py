@@ -123,3 +123,39 @@ def mock_oracle_factory():
         from src.oracle_protocol import MockOracle
         return MockOracle(script=replies)
     return _factory
+
+
+@pytest.fixture
+def oracle_agent_factory():
+    """
+    Factory for OracleAgent with a MagicMock LLM client.
+    Usage: oracle_agent_factory(reply_text="some oracle reply")
+    The mock client returns reply_text for every call to client.messages.create().
+
+    Requires src/oracle_agent.py to exist (ImportError otherwise — expected in Wave 0).
+    """
+    def _factory(
+        reply_text: str = "looks good to me",
+        consistency_rate: float = 0.8,
+        drift_probability: float = 0.1,
+        sycophancy_resistance: float = 0.9,
+        preferred_k: int = 3,
+    ):
+        from unittest.mock import MagicMock
+        from src.oracle_agent import OracleAgent, OracleSpec, NoiseParams
+        spec = OracleSpec(
+            preferred_k=preferred_k,
+            semantic_axes=["topic"],
+            persona_description="A neutral test analyst.",
+        )
+        noise = NoiseParams(
+            consistency_rate=consistency_rate,
+            drift_probability=drift_probability,
+            sycophancy_resistance=sycophancy_resistance,
+        )
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text=reply_text)]
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_response
+        return OracleAgent(spec=spec, noise_params=noise, client=mock_client)
+    return _factory
