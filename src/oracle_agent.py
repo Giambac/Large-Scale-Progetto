@@ -267,6 +267,7 @@ class OracleAgent:
         state: "ClusteringState",
         message: str,
         global_instructions: list[str] | None = None,
+        cognitive_load: float | None = None,
     ) -> OracleReply:
         """Generate an oracle reply by calling the LLM with an assembled system prompt.
 
@@ -274,6 +275,8 @@ class OracleAgent:
             state: Current ClusteringState for prompt assembly.
             message: The clustering system's message to the oracle.
             global_instructions: Accumulated FB-04 instructions. None treated as [].
+            cognitive_load: Pre-computed per-turn cognitive load (ORC-03). If None,
+                computed internally — callers should prefer passing the pre-computed value.
 
         Returns:
             OracleReply with raw_text, satisfied flag, turn_cognitive_load, and
@@ -284,7 +287,8 @@ class OracleAgent:
         if global_instructions is None:
             global_instructions = []
 
-        cognitive_load = f_cognitive_load(state, message)
+        if cognitive_load is None:
+            cognitive_load = f_cognitive_load(state, message)
         system_prompt = self._build_system_prompt(state, cognitive_load, global_instructions)
 
         # Provider-aware LLM call (Pitfall 2):

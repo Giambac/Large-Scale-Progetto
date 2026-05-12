@@ -206,9 +206,9 @@ def test_instructional_feedback_accumulates(oracle_agent_factory, tmp_path):
     # Wrap oracle.reply to capture global_instructions argument
     original_reply = oracle.reply
     captured_instructions = []
-    def wrapped_reply(state_arg, message_arg, global_instructions=None):
+    def wrapped_reply(state_arg, message_arg, global_instructions=None, cognitive_load=None):
         captured_instructions.append(list(global_instructions) if global_instructions else [])
-        return original_reply(state_arg, message_arg, global_instructions=global_instructions)
+        return original_reply(state_arg, message_arg, global_instructions=global_instructions, cognitive_load=cognitive_load)
     oracle.reply = wrapped_reply
 
     log_path = str(tmp_path / "audit_log.jsonl")

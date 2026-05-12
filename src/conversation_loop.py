@@ -179,9 +179,13 @@ def run_conversation(
         message = _format_message(action, state)
         cognitive_load = f_cognitive_load(state, message)
 
-        # Step 3b: Get oracle reply — pass global_instructions to OracleAgent if available (FB-04, D-12)
+        # Step 3b: Get oracle reply — pass cognitive_load + global_instructions to OracleAgent (ORC-03, FB-04, D-06, D-12)
         if isinstance(oracle, _OracleAgent):
-            reply = oracle.reply(state, message, global_instructions=global_instructions)
+            reply = oracle.reply(
+                state, message,
+                global_instructions=global_instructions,
+                cognitive_load=cognitive_load,
+            )
         else:
             reply = oracle.reply(state, message)
 
