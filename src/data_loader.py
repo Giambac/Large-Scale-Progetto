@@ -1,11 +1,15 @@
 """
-data_loader.py — Dataset download, split, and hash verification.
+data_loader.py — Scarica i dati, li divide e protegge il held-out.
 
-PRE-01: Frozen held-out split with SHA-256 hash lock.
-D-01: Amazon Reviews 2023 Arts, Crafts & Sewing, 15K records.
-D-03: 80/20 random split, seeded.
-D-04: verify_held_out_hash crashes on mismatch.
-D-11: item_ids are sequential integers 0 to N-1.
+Questo file fa tre cose, tutte eseguite una volta sola all'inizio del progetto:
+
+    1. Scarica 15.000 recensioni Amazon (categoria Arts & Crafts) da HuggingFace in streaming — senza scaricare tutti i 9 milioni di righe del dataset.
+
+    2. Divide le 15.000 recensioni in due parti: 12.000 per il training (usate per clustering e conversazione) e 3.000 held-out (chiuse in
+    cassaforte per la valutazione finale nella Fase 6).
+
+    3. Calcola l'impronta digitale SHA-256 del file held-out e la salva. Ogni volta che il sistema parte, l'hash viene ricalcolato e confrontato — 
+    se il file è stato toccato, il programma crasha immediatamente.
 """
 import hashlib
 import json
@@ -14,31 +18,38 @@ import random
 from typing import Optional
 
 
-# Constants — do not change after held_out.jsonl is created
+# Costanti — non modificare dopo che held_out.jsonl è stato creato
 DATASET_ID = "McAuley-Lab/Amazon-Reviews-2023"
 DATASET_CONFIG = "raw_review_Arts_Crafts_and_Sewing"
-# D-02 specifies 'review_text' as the field name; RESEARCH.md confirms the actual HuggingFace field is 'text' — HF_TEXT_FIELD = "text" is correct per RESEARCH.md correction.
-HF_TEXT_FIELD = "text"          # HuggingFace field name (not 'review_text')
+HF_TEXT_FIELD = "text"          # nome del campo testo su HuggingFace
 TARGET_SAMPLE_SIZE = 15_000
 TRAIN_RATIO = 0.80
 DEFAULT_SEED = 42
 
+"""
+def compute_sha256( )
+    Calcola l'impronta digitale SHA-256 di un file.
 
+    Legge il file a blocchi da 64KB per non caricare tutto in memoria.
+    Restituisce una stringa esadecimale di 64 caratteri.
+    Se il contenuto del file cambia anche di un solo carattere,
+    l'impronta cambia completamente.
+"""
 def compute_sha256(filepath: str) -> str:
-    """Compute SHA-256 hex digest of a file using chunked reads."""
     h = hashlib.sha256()
     with open(filepath, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
 
+"""
+def verify_held_out_hash( )
+    Verifica che il file held-out non sia stato modificato dal momento in cui è stato creato.
 
+    Legge l'hash salvato in hash_path, ricalcola l'hash del file held-out, e crasha immediatamente se non coincidono. 
+    Viene chiamata ogni volta che il sistema parte — è la guardia che impedisce contaminazioni accidentali del set di valutazione.
+"""
 def verify_held_out_hash(held_out_path: str, hash_path: str) -> None:
-    """
-    Assert that the SHA-256 of held_out_path matches the stored hash in hash_path.
-    Crashes immediately with AssertionError if the hash does not match.
-    Called at session start — any mismatch means the held-out set was contaminated.
-    """
     with open(hash_path) as f:
         expected = f.read().strip()
     actual = compute_sha256(held_out_path)
@@ -49,16 +60,20 @@ def verify_held_out_hash(held_out_path: str, hash_path: str) -> None:
         f"  File may have been modified: {held_out_path}"
     )
 
+"""
+def split_dataset( )
+    Divide le recensioni in training e held-out in modo riproducibile.
 
+    Con seed=42 la divisione è sempre identica — se la rifai domani ottieni gli stessi due gruppi.
+
+    Restituisce (train, held_out) con:
+        - train : floor(N * 0.80) record
+        - held_out : i restanti record
+"""
 def split_dataset(
     records: list[dict],
     seed: int = DEFAULT_SEED,
 ) -> tuple[list[dict], list[dict]]:
-    """
-    Randomly split records into (train, held_out) at TRAIN_RATIO.
-    Returns exact integer counts: floor(N * TRAIN_RATIO) train, remainder held-out.
-    Split is reproducible given the same seed.
-    """
     assert len(records) > 0, "Cannot split an empty list"
     indices = list(range(len(records)))
     rng = random.Random(seed)
@@ -69,7 +84,18 @@ def split_dataset(
     assert len(train) + len(held_out) == len(records)
     return train, held_out
 
+"""
+    Setup iniziale: scarica 15K recensioni, divide 80/20, salva l'hash SHA-256.
 
+    Viene eseguita una volta sola. Se held_out.jsonl o held_out.sha256 esistono già, crasha immediatamente invece di sovrascriverli — sovrascrivere il
+    held-out dopo aver fatto esperimenti contaminerebbe la valutazione finale.
+
+    File scritti:
+        dataset/arts_crafts_15k.jsonl       — tutte le 15K recensioni grezze
+        dataset/train.jsonl                 — 12.000 recensioni per il training
+        dataset/held_out.jsonl              — 3.000 recensioni bloccate — NON RIGENERARE
+        dataset/held_out.sha256             — hash SHA-256 del held-out — NON RIGENERARE
+"""
 def download_and_save_dataset(
     output_dir: str = "dataset",
     raw_path: Optional[str] = None,
@@ -78,19 +104,6 @@ def download_and_save_dataset(
     hash_path: Optional[str] = None,
     seed: int = DEFAULT_SEED,
 ) -> None:
-    """
-    One-time setup: download 15K reviews, split 80/20, write SHA-256 hash.
-
-    IMPORTANT: If held_out_path and hash_path already exist, this function
-    asserts and crashes rather than overwriting them. Overwriting the held-out
-    split after experiments have run would contaminate evaluation.
-
-    Files written:
-      {output_dir}/arts_crafts_15k.jsonl  — raw 15K records
-      {output_dir}/train.jsonl            — 80% split (12000 records)
-      {output_dir}/held_out.jsonl         — 20% split (3000 records) — NEVER REGENERATE
-      {output_dir}/held_out.sha256        — SHA-256 of held_out.jsonl — NEVER REGENERATE
-    """
     from datasets import load_dataset  # only imported here — not needed at import time
 
     os.makedirs(output_dir, exist_ok=True)

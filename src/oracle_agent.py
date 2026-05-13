@@ -1,17 +1,16 @@
 """
-oracle_agent.py — OracleAgent, OracleSpec, NoiseParams (ORC-01, ORC-02, ORC-03, ORC-04).
+oracle_agent.py — L'oracle LLM reale con preferenze configurabili (Phase 3).
 
-OracleAgent is an LLM-backed oracle that satisfies OracleProtocol via structural subtyping.
-It assembles a multi-section system prompt from OracleSpec, NoiseParams, global_instructions,
-current state summary, and optional cognitive load gate, then calls the LLM client.
+Questo file implementa l'oracle che sostituisce il MockOracle nella Phase 3. Invece di seguire uno script fisso, questo oracle chiama Claude con un sistema
+di prompt costruito in cinque sezioni, che codifica le preferenze dell'oracle, il suo comportamento "umano" (rumore, deriva, sycofancy), e lo stato corrente.
 
-Key behaviors:
-- OracleSpec/NoiseParams injected at construction; fixed for agent lifetime (D-02).
-- Noise parameters are prompt-injected behavioral rules (D-04).
-- oracle_init JSONL event written to events_path at construction time if provided (D-05 / ORC-02).
-- Provider-aware LLM call: Anthropic uses system= kwarg; OpenAI/Google adapters prepend to message.
-- contradiction_detected set by run_conversation() via update_delta_window() after parse_feedback (ORC-04).
-- try/except ONLY at the two LLM client.messages.create() call sites (CLAUDE.md fail-loudly rule).
+Tre strutture dati:
+    - OracleSpec : le preferenze fisse dell'oracle (quanti cluster vuole, su quali dimensioni raggruppa, che persona simula)
+    - NoiseParams : i parametri che rendono l'oracle "imperfetto" come un umano (quanto spesso è d'accordo, quanto spesso cambia idea, quanto mantiene la sua posizione)
+    - OracleAgent : la classe principale che assembla il prompt e chiama l'LLM
+
+Funzione separata a livello di modulo:
+    - _contradicts : controlla se due feedback si contraddicono strutturalmente
 """
 from __future__ import annotations
 
@@ -28,78 +27,81 @@ from src.oracle_protocol import OracleReply
 if TYPE_CHECKING:
     from src.state import ClusteringState
 
+"""
+class OracleSpec:
+    Le preferenze fisse dell'oracle per tutta la durata della sessione.
 
+    preferred_k             — quanti cluster vuole l'oracle.
+    semantic_axes           — su quali dimensioni raggruppa i dati, es. ["topic", "sentiment"].
+    persona_description     — descrizione della persona che l'oracle simula, iniettata nel system prompt.
+
+    Una volta costruito l'OracleAgent, la spec non cambia. Per testare un oracle con preferenze diverse si crea una nuova istanza.
+"""
 @dataclass
 class OracleSpec:
-    """Preference specification for the oracle agent (ORC-01, D-01).
-
-    preferred_k: target number of clusters the oracle aims for.
-    semantic_axes: dimensions the oracle groups data by (e.g. ['topic', 'sentiment']).
-    persona_description: free-text flavor injected into the LLM system prompt.
-
-    Fixed for the agent lifetime — different runs use different OracleAgent instances (D-02).
-    """
     preferred_k: int
     semantic_axes: list[str]
     persona_description: str
 
+"""
+    I parametri che controllano quanto l'oracle si comporta come un umano imperfetto.
 
+    Tutti e tre sono numeri tra 0.0 e 1.0 e diventano istruzioni in linguaggio naturale nel system prompt — non c'è nessuna manipolazione tecnica della
+    temperatura o post-processing della risposta.
+
+    consistency_rate            — quanto spesso l'oracle accetta il clustering proposto. 0.8 = accetta l'80% delle volte.
+    drift_probability           — con che probabilità introduce una nuova preferenza ad ogni turno, anche se contraddice qualcosa detto prima.
+    sycophancy_resistance       — quanto l'oracle mantiene la sua posizione quando il sistema non è d'accordo. 0.9 = cede solo il 10% delle volte.
+"""
 @dataclass
 class NoiseParams:
-    """Noise parameters controlling oracle behavioral variation (ORC-02, D-03, D-04).
-
-    consistency_rate: 0.0-1.0 — fraction of turns oracle agrees with proposed clustering.
-    drift_probability: 0.0-1.0 — per-turn probability of introducing a new contradicting preference.
-    sycophancy_resistance: 0.0-1.0 — rate at which oracle maintains position under pushback.
-
-    All three become prompt-injected behavioral rules (D-04). No post-processing or temperature
-    manipulation. Logged as oracle_init JSONL event at run start (D-05).
-    """
     consistency_rate: float       # 0.0-1.0
     drift_probability: float      # 0.0-1.0
     sycophancy_resistance: float  # 0.0-1.0
 
+"""
+def _contradicts( )
+    Controlla se due feedback si contraddicono strutturalmente.
 
+    Tre regole:
+        - MergeFeedback(A, B) contraddice un precedente SplitFeedback sullo stesso cluster A o B — hai prima diviso, ora vuoi unire.
+        - SplitFeedback(X) contraddice un precedente MergeFeedback che aveva X come input — hai prima unito, ora vuoi dividere.
+        - MoveItemFeedback(item, target=B) contraddice un precedente MoveItemFeedback(item, target=C) sullo stesso item con destinazione diversa.
+
+    GlobalFeedback e InstructionalFeedback vengono ignorati — sono troppo semantici per essere confrontati strutturalmente.
+"""
 def _contradicts(new_delta, prior_delta) -> bool:
-    """Structural contradiction check between two FeedbackDelta objects (D-09).
-
-    Rules:
-    - MergeFeedback(A, B) contradicts SplitFeedback(cluster_id=A) or SplitFeedback(cluster_id=B)
-    - SplitFeedback(X) contradicts a prior MergeFeedback if X was one of the input cluster IDs
-      (cluster_a_id or cluster_b_id) — those clusters were retired by the merge.
-    - MoveItemFeedback(item, target=B) contradicts MoveItemFeedback(item, target=C) where C != B.
-    GlobalFeedback and InstructionalFeedback are ignored (too semantic for structural comparison).
-    """
     from src.feedback import MergeFeedback, SplitFeedback, MoveItemFeedback
 
-    # MergeFeedback(A, B) contradicts prior SplitFeedback(cluster_id=A) or SplitFeedback(cluster_id=B)
+    # Merge contraddice uno split precedente sugli stessi cluster
     if isinstance(new_delta, MergeFeedback) and isinstance(prior_delta, SplitFeedback):
         return prior_delta.cluster_id in (new_delta.cluster_a_id, new_delta.cluster_b_id)
 
-    # SplitFeedback(X) contradicts prior MergeFeedback if X was one of the merged cluster inputs
-    # (Phase 2 convention: merged cluster gets new monotonic ID — D-11 / Pitfall 3 resolved)
+    # Split contraddice un merge precedente che aveva usato gli stessi cluster come input
     if isinstance(new_delta, SplitFeedback) and isinstance(prior_delta, MergeFeedback):
         return new_delta.cluster_id in (prior_delta.cluster_a_id, prior_delta.cluster_b_id)
 
-    # MoveItemFeedback(item, target=B) contradicts prior MoveItemFeedback(item, target=C) where C != B
+    # Move sullo stesso item ma con destinazione diversa
     if isinstance(new_delta, MoveItemFeedback) and isinstance(prior_delta, MoveItemFeedback):
         return (new_delta.item_id == prior_delta.item_id and
                 new_delta.target_cluster_id != prior_delta.target_cluster_id)
 
     return False
-    # GlobalFeedback and InstructionalFeedback: ignored (D-09)
 
-
+"""
 class OracleAgent:
-    """LLM-backed oracle satisfying OracleProtocol via structural subtyping (ORC-01).
+    L'oracle LLM reale. Soddisfa OracleProtocol tramite duck typing — non eredita da nessuna classe, ma ha un metodo reply() con la stessa firma.
 
-    Assembles a multi-section system prompt from spec, noise params, global instructions,
-    current state summary, and cognitive load gate. Calls the injected LLM client.
+    Costruzione:
+        - Valida i tre parametri di rumore (devono essere tra 0 e 1).
+        - Crea la finestra scorrevole degli ultimi 10 feedback per il drift detection.
+        - Se viene passato events_path, scrive subito oracle_init su events.jsonl.
 
-    Full implementation with structural drift detection via _check_contradiction() and
-    update_delta_window() (ORC-04, D-09).
-    """
-
+    Metodi principali:
+        - reply() : assembla il prompt e chiama l'LLM.
+        - update_delta_window() : controlla le contraddizioni e aggiorna la finestra.
+"""
+class OracleAgent:
     def __init__(
         self,
         spec: OracleSpec,
@@ -109,6 +111,7 @@ class OracleAgent:
         window_size: int = 10,
         events_path: Path | None = None,
     ) -> None:
+        # Valida i parametri di rumore — se fuori range crasha subito
         assert 0.0 <= noise_params.consistency_rate <= 1.0
         assert 0.0 <= noise_params.drift_probability <= 1.0
         assert 0.0 <= noise_params.sycophancy_resistance <= 1.0
@@ -116,10 +119,13 @@ class OracleAgent:
         self._noise = noise_params
         self._client = client
         self._model = model
+
+        # Finestra scorrevole degli ultimi N feedback strutturati.
+        # maxlen=10 significa che i feedback più vecchi vengono scartati automaticamente
         self._delta_window: deque = deque(maxlen=window_size)
 
-        # ORC-02 / D-05: write oracle_init event at construction time if events_path provided.
-        # This enables unit testing ORC-02 without requiring the conversation loop.
+        # Scrive oracle_init su events.jsonl se viene passato il percorso.
+        # Permette di testare ORC-02 anche senza passare dal loop conversazionale
         if events_path is not None:
             _events_path_str = str(events_path)
             _parent = os.path.dirname(_events_path_str)
@@ -148,26 +154,27 @@ class OracleAgent:
         """Return the noise parameters."""
         return self._noise
 
+    """
+    def _build_system_prompt( )
+        Assembla il system prompt in cinque sezioni.
+
+        Sezione 1: persona e preferenze — chi è l'oracle e cosa vuole.
+        Sezione 2: regole comportamentali — quanto spesso è d'accordo, quanto spesso cambia idea, quanto mantiene la posizione.
+        Sezione 3: istruzioni accumulate dai turni precedenti (solo se ci sono).
+        Sezione 4: riassunto dello stato corrente — quanti cluster, quante recensioni.
+        Sezione 5: istruzione OVERLOAD — aggiunta solo se il carico cognitivo supera la soglia, per far rispondere con un feedback più semplice.
+    """
     def _build_system_prompt(
         self,
         state: "ClusteringState",
         cognitive_load: float,
         global_instructions: list[str],
     ) -> str:
-        """Assemble the five-section system prompt for the oracle LLM call.
-
-        Sections (joined by double newline):
-        1. Persona + preference spec + satisfaction token instruction
-        2. Noise behavioral rules (D-04)
-        3. Standing instructions from FB-04 accumulator (if any)
-        4. Current state summary (clusters, turn index)
-        5. Cognitive load gate (D-08) — appended LAST, only if load > threshold
-        """
         from src.cognitive_load import COG_LOAD_THRESHOLD
 
         parts = []
 
-        # Section 1: Persona + preference spec
+        # Sezione 1: persona e preferenze
         cr = self._noise.consistency_rate
         parts.append(
             f"You are a human data analyst with the following preferences:\n"
@@ -177,7 +184,7 @@ class OracleAgent:
             f"When you are fully satisfied with the current clustering, end your reply with the exact token: [SATISFIED]"
         )
 
-        # Section 2: Noise behavioral rules (D-04)
+        # Sezione 2: regole comportamentali dai NoiseParams
         dp = self._noise.drift_probability
         sr = self._noise.sycophancy_resistance
         parts.append(
@@ -190,78 +197,89 @@ class OracleAgent:
             f"at rate {sr:.2f}."
         )
 
-        # Section 3: Global instructions from FB-04 accumulator (only if non-empty)
+        # Sezione 3: istruzioni accumulate (solo se la lista non è vuota)
         if global_instructions:
             parts.append(
                 "Standing instructions from prior turns:\n" +
                 "\n".join(f"- {i}" for i in global_instructions)
             )
 
-        # Section 4: Current state summary
+        # Sezione 4: riassunto dello stato corrente
         cluster_summary = "; ".join(
             f"Cluster {c.id} '{c.name}' ({len(c.item_ids)} items)"
             for c in state.clusters
         )
         parts.append(f"Current clustering (turn {state.turn_index}): {cluster_summary}")
 
-        # Section 5: Cognitive load gate (D-08) — appended LAST
+        # Sezione 5: istruzione OVERLOAD — aggiunta per ultima, solo se necessario
         if cognitive_load > COG_LOAD_THRESHOLD:
             parts.append("OVERLOAD: Focus on one thing only.")
 
         return "\n\n".join(parts)
 
+    """
+    def _check_contradiction( )
+        Confronta un singolo delta con tutti i feedback nella finestra scorrevole.
+        Non modifica la finestra — usa update_delta_window() per aggiungere delta.
+        Restituisce (True, turno_precedente) alla prima contraddizione trovata.
+    """
     def _check_contradiction(
         self, delta, current_turn: int
     ) -> tuple[bool, int | None]:
-        """Compare delta against rolling window. Returns (contradicted, prior_turn).
-
-        Does NOT mutate the window — call update_delta_window() to add deltas.
-        """
         for prior_turn, prior_delta in self._delta_window:
             if _contradicts(delta, prior_delta):
                 return True, prior_turn
         return False, None
 
+    """
+    def update_delta_window( )
+        Controlla le contraddizioni e poi aggiunge i nuovi delta alla finestra.
+
+        L'ordine è importante: controlla PRIMA di aggiungere, così i feedback dello stesso turno non si contraddicono tra loro.
+
+        Viene chiamato dal loop dopo che f_next_state ha applicato i feedback.
+        Usa new_state.turn_index (dopo l'aggiornamento), non state.turn_index.
+
+        Restituisce (True, turno_precedente) alla prima contraddizione trovata, oppure (False, None) se tutto è coerente.
+    """
     def update_delta_window(
         self, deltas: list, turn_index: int
     ) -> tuple[bool, int | None]:
-        """Check new deltas for contradictions against the rolling window, then
-        append structural deltas to the window.
-
-        Called by run_conversation() after parse_feedback() returns deltas (ORC-04, D-09).
-
-        Args:
-            deltas:     List of FeedbackDelta objects from parse_feedback().
-            turn_index: The turn_index of the state AFTER f_next_state (new_state.turn_index).
-                        MUST use new_state.turn_index, not state.turn_index (off-by-one guard).
-
-        Returns:
-            (contradiction_detected, contradicted_turn) — first contradiction found,
-            or (False, None) if no contradiction detected.
-        """
         from src.feedback import GlobalFeedback, InstructionalFeedback
 
         first_contradiction: bool = False
         first_contradicted_turn: int | None = None
 
-        # Check for contradictions BEFORE appending (so current turn's deltas
-        # don't contradict each other within the same turn)
+        # Prima controlla le contraddizioni — senza ancora aggiungere alla finestra
         for delta in deltas:
             if isinstance(delta, (GlobalFeedback, InstructionalFeedback)):
-                continue  # ignored for structural comparison (D-09)
+                continue  # questi tipi non vengono confrontati strutturalmente
 
             detected, prior_turn = self._check_contradiction(delta, turn_index)
             if detected and not first_contradiction:
                 first_contradiction = True
                 first_contradicted_turn = prior_turn
 
-        # Append structural deltas to window AFTER checking
+        # Poi aggiunge i delta strutturali alla finestra
         for delta in deltas:
             if not isinstance(delta, (GlobalFeedback, InstructionalFeedback)):
                 self._delta_window.append((turn_index, delta))
 
         return first_contradiction, first_contradicted_turn
 
+    """
+        Genera una risposta chiamando l'LLM con il system prompt assemblato.
+
+        Se cognitive_load non viene passato, lo calcola internamente — ma il loop lo passa sempre esplicitamente per evitare di calcolarlo due volte.
+
+        Gestione del provider: l'SDK Anthropic accetta il system prompt come kwarg separato (system=). Gli altri provider lo vogliono concatenato al messaggio.
+        Il codice rileva il tipo di client e adatta la chiamata.
+
+        Il token [SATISFIED] nella risposta imposta satisfied=True nell'OracleReply — è il segnale di stop principale del loop.
+
+        contradiction_detected e contradicted_turn vengono impostati dal loop dopo la chiamata a update_delta_window(), non qui — perché i delta 
+        non sono ancora disponibili quando reply() viene chiamato.
+    """
     def reply(
         self,
         state: "ClusteringState",
@@ -269,19 +287,6 @@ class OracleAgent:
         global_instructions: list[str] | None = None,
         cognitive_load: float | None = None,
     ) -> OracleReply:
-        """Generate an oracle reply by calling the LLM with an assembled system prompt.
-
-        Args:
-            state: Current ClusteringState for prompt assembly.
-            message: The clustering system's message to the oracle.
-            global_instructions: Accumulated FB-04 instructions. None treated as [].
-            cognitive_load: Pre-computed per-turn cognitive load (ORC-03). If None,
-                computed internally — callers should prefer passing the pre-computed value.
-
-        Returns:
-            OracleReply with raw_text, satisfied flag, turn_cognitive_load, and
-            contradiction_detected=False (Wave 1; Wave 2 adds contradiction check).
-        """
         from src.cognitive_load import f_cognitive_load, COG_LOAD_THRESHOLD
 
         if global_instructions is None:
@@ -291,9 +296,7 @@ class OracleAgent:
             cognitive_load = f_cognitive_load(state, message)
         system_prompt = self._build_system_prompt(state, cognitive_load, global_instructions)
 
-        # Provider-aware LLM call (Pitfall 2):
-        # Anthropic SDK uses system= as a top-level kwarg.
-        # OpenAI/Google adapters only accept messages= (no system= kwarg).
+        # Rileva se il client è Anthropic o un altro provider.
         try:
             import anthropic as _anthropic_mod
             _is_anthropic = isinstance(self._client, _anthropic_mod.Anthropic)
@@ -301,6 +304,7 @@ class OracleAgent:
             _is_anthropic = False
 
         if _is_anthropic:
+            # Anthropic accetta system= come kwarg separato.
             try:
                 response = self._client.messages.create(
                     model=self._model,
@@ -313,6 +317,7 @@ class OracleAgent:
                     f"OracleAgent LLM call failed at turn {state.turn_index}: {exc}"
                 ) from exc
         else:
+            # Altri provider: system prompt concatenato al messaggio.
             full_message = system_prompt + "\n\n" + message
             try:
                 response = self._client.messages.create(
@@ -326,11 +331,8 @@ class OracleAgent:
                 ) from exc
 
         raw_text = response.content[0].text
+        # Il token [SATISFIED] nella risposta = l'oracle è soddisfatto → stop.
         satisfied = "[SATISFIED]" in raw_text
-
-        # contradiction_detected and contradicted_turn are set by run_conversation()
-        # after calling update_delta_window() with parsed deltas (ORC-04, D-09).
-        # reply() itself does not have access to parsed deltas (they aren't available yet).
 
         return OracleReply(
             raw_text=raw_text,

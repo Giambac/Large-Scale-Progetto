@@ -1,26 +1,26 @@
 """
-conversation_loop.py — Plain Python while loop orchestrator (D-01, D-02).
+conversation_loop.py — Il loop principale che fa girare la conversazione.
 
-The loop owns all I/O (D-04): JSONL AuditLog write + SocketIO emit.
-f_* functions are pure and called from here; they do not write anything.
+Questo file è il direttore d'orchestra del sistema. Ad ogni turno esegue
+in sequenza questi passi:
+    1. Calcola l'incertezza del clustering corrente
+    2. Sceglie l'azione da fare (mostrare, chiedere, fermarsi)
+    3. Formatta il messaggio per l'oracle e calcola il carico cognitivo
+    4. Chiede la risposta all'oracle
+    5. Trasforma la risposta in oggetti feedback strutturati
+    6. Applica il feedback e produce il nuovo stato
+    7. Controlla se c'è una contraddizione con feedback precedenti (Fase 3)
+    8. Scrive il nuovo stato sul file di log
+    9. Chiama il callback post-turno (per UMAP e sessioni persistenti)
+    10. Emette l'aggiornamento al browser via SocketIO
+    11. Controlla le condizioni di stop
 
-GlobalFeedback accumulator (FB-01):
-    The loop maintains a `global_instructions: list[str]` that persists across all turns.
-    This list is passed to f_next_state each turn. When f_next_state processes a GlobalFeedback
-    delta, it appends instruction_text to this list in-place. The accumulated list is available
-    for Phase 3 to pass to the ClusterNamer for prompt enrichment.
+È l'unico file che fa I/O: scrive il log, emette eventi. Le funzioni f_* sono pure e non scrivono nulla.
 
-Phase 3 additions:
-    - f_cognitive_load computed before oracle.reply() each turn (ORC-03, D-06)
-    - global_instructions passed to OracleAgent.reply() if oracle is an OracleAgent (FB-04, D-12)
-    - oracle_init event written to events.jsonl sidecar at run start (ORC-02, D-05)
-    - drift_event written to events.jsonl when reply.contradiction_detected is True (ORC-04, D-10)
-    - events.jsonl is a SEPARATE sidecar file from audit_log.jsonl (Pitfall 5 — never write
-      oracle_init/drift_event to audit_log.jsonl; load_audit_log() would crash on non-state records)
-
-Threading note: run_conversation() is designed to run in a background thread
-via socketio.start_background_task() (see web/app.py). When socketio is None,
-emit calls are skipped — useful for unit tests without a running Flask server.
+Note pratiche:
+    - Gira in un thread separato quando avviato dal server Flask.
+    - Se socketio=None salta tutti gli emit — utile nei test senza server.
+    - Se llm_client=None salta il parsing — i delta sono sempre lista vuota.
 """
 from __future__ import annotations
 
@@ -43,12 +43,17 @@ if TYPE_CHECKING:
     from src.oracle_protocol import OracleProtocol
     from src.strategy import StrategyProtocol
 
+"""
+def _format_message( )
+    Trasforma un'Action in un messaggio leggibile da mandare all'oracle.
 
+    Ogni tipo di azione produce un messaggio diverso:
+        - show_full : elenca tutti i cluster con il loro nome e numero di recensioni
+        - show_subset : dice al turno corrente che si mostrerà un sottoinsieme
+        - ask_question : chiede se ci sono cluster da dividere, unire o spostare
+        - stop : chiede conferma che il clustering va bene
+"""
 def _format_message(action: object, state: ClusteringState) -> str:
-    """
-    Convert an Action to a human-readable message for the oracle.
-    Phase 2: plain text summary. Phase 3 Oracle Agent will parse this.
-    """
     from src.strategy import Action
     assert isinstance(action, Action), f"Expected Action, got {type(action)}"
     if action.action_type == "show_full":
@@ -66,28 +71,41 @@ def _format_message(action: object, state: ClusteringState) -> str:
     else:
         return f"Action: {action.action_type}"
 
+"""
+def _write_event( )
+    Scrive un evento JSON nel file sidecar events.jsonl.
 
+    Usato per due tipi di eventi della Fase 3:
+        - oracle_init: i parametri dell'oracle all'inizio della sessione
+        - drift_event: quando viene rilevata una contraddizione
+
+    IMPORTANTE: questo file è separato da audit_log.jsonl. L'audit log contiene solo ClusteringState — se ci finisse un record diverso, load_audit_log() crasherebbe.
+"""
 def _write_event(record: dict, events_path: str) -> None:
-    """
-    Append one JSON event record to the events sidecar file.
-
-    Used for oracle_init and drift_event records (Phase 3).
-    MUST NOT write to audit_log.jsonl — that file stores only ClusteringState lines
-    and load_audit_log() will crash on non-state records (Pitfall 5).
-
-    No try/except — fail loudly per CLAUDE.md.
-
-    Args:
-        record:      Plain dict, JSON-serializable (no numpy types).
-        events_path: Path to the events.jsonl sidecar file.
-    """
     parent = os.path.dirname(events_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
     with open(events_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
 
+"""
+def run_conversation( )
+    Il loop principale della conversazione. Gira finché una condizione di stop non scatta, poi restituisce lo stato finale.
 
+    Parametri:
+        initial_state               - stato iniziale prodotto da build_initial_clustering_state.
+        oracle                      - l'oracle (MockOracle nella Fase 2, OracleAgent nella Fase 3).
+        store                       - gli embeddings, usati da f_next_state per gli split.
+        namer                       - usato per rinominare i cluster dopo split/merge/move.
+        strategy                    - la strategia di selezione dell'azione. None = RandomStrategy.
+        log_path                    - percorso del file audit_log.jsonl.
+        criteria                    - criteri di stop. None = default (15 turni).
+        socketio                    - istanza SocketIO per aggiornare il browser. None = nessun emit.
+        id_to_text                  - dizionario item_id -> testo della recensione.
+        llm_client                  - client Anthropic per il parsing del feedback. None = no parsing.
+        post_turn_callback          - funzione chiamata dopo ogni turno con (new_state, deltas). Usata per ricalcolare UMAP e salvare state.json nelle sessioni.
+        events_path                 - percorso del sidecar events.jsonl per oracle_init e drift_event. None = stessa cartella di log_path.
+"""
 def run_conversation(
     initial_state: ClusteringState,
     oracle: "OracleProtocol",
@@ -102,31 +120,9 @@ def run_conversation(
     post_turn_callback: Optional[Callable] = None,  # (new_state, deltas) -> None
     events_path: str | None = None,  # sidecar file for oracle_init + drift_event records (Phase 3)
 ) -> ClusteringState:
-    """
-    Plain Python while loop (D-01). Runs until a stopping condition fires.
 
-    Args:
-        initial_state: Starting ClusteringState (from build_initial_clustering_state).
-        oracle: OracleProtocol instance (MockOracle in Phase 2, real Oracle in Phase 3).
-        store: EmbeddingStore (read-only; used by f_next_state split path).
-        namer: ClusterNamer (for renaming affected clusters after split/merge/move).
-        strategy: StrategyProtocol for action selection. None -> RandomStrategy(seed=0).
-        log_path: Path for the AuditLog JSONL file.
-        criteria: StoppingCriteria. None -> StoppingCriteria() defaults (turn_budget=15).
-        socketio: SocketIO instance for emitting state_update events. None -> skip emits.
-        id_to_text: dict[item_id, text] for cluster naming. None -> empty dict.
-        llm_client: Anthropic client for parse_feedback. None -> no parsing (deltas=[]).
-        post_turn_callback: Optional callable (new_state, deltas) -> None. Called after
-            each turn's AuditLog write. Used for projection recompute on split/merge (D-22).
-        events_path: Path for oracle_init + drift_event sidecar JSONL file (Phase 3).
-            None -> derived from log_path (same directory, filename events.jsonl).
-            MUST be a different file from log_path — audit_log.jsonl stores only state records.
-
-    Returns:
-        Final ClusteringState when the loop terminates.
-    """
-    # Phase 3: ORC-03 — import f_cognitive_load at function body level, OUTSIDE the while loop.
-    # Do NOT import inside the loop body.
+    # f_cognitive_load viene importato qui, una volta sola fuori dal loop
+    # Non va importato dentro il while — sarebbe reimportato ad ogni turno
     from src.cognitive_load import f_cognitive_load  # ORC-03: computed before oracle.reply()
 
     if criteria is None:
@@ -136,21 +132,21 @@ def run_conversation(
     if id_to_text is None:
         id_to_text = {}
 
-    # Phase 3: Derive events sidecar path (Pitfall 5 — separate from audit_log.jsonl)
+    # Percorso del sidecar events.jsonl — cartella diversa da audit_log.jsonl
     if events_path is None:
         _events_dir = os.path.dirname(log_path) or "."
         events_path = os.path.join(_events_dir, "events.jsonl")
 
+    # Inizializza la gerarchia con tutti i cluster iniziali
     hierarchy = HierarchyStore()
-    # Register all initial clusters in the hierarchy
     for cluster in initial_state.clusters:
         hierarchy.register(cluster.id)
 
-    # FB-01: GlobalFeedback accumulator — persists across all turns in this session
+    # Lista che accumula le istruzioni GlobalFeedback per tutta la sessione
+    # Vive qui fuori dallo stato perché lo schema di ClusteringState è congelato
     global_instructions: list[str] = []
 
-    # Phase 3: Write oracle_init event if oracle is an OracleAgent (ORC-02, D-05)
-    # Local import to avoid circular imports at module level.
+    # Phase 3: scrive oracle_init su events.jsonl se l'oracle è un OracleAgent
     from src.oracle_agent import OracleAgent as _OracleAgent  # local import — avoid circular
     if isinstance(oracle, _OracleAgent):
         _write_event({
@@ -168,18 +164,19 @@ def run_conversation(
     recent_magnitudes: list[float] = []
 
     while True:
-        # Step 1: Compute uncertainty
+        # Passo 1: calcola cosa è incerto nel clustering corrente
         uncertainty_report = f_uncertainty(state)
 
-        # Step 2: Select action
+        # Passo 2: scegli l'azione da fare questo turno
         action = f_next_best_step(state, strategy, uncertainty_report)
 
-        # Step 3a: Format message and compute per-turn cognitive load (Phase 3 — ORC-03, D-06)
-        # f_cognitive_load is imported at function body level (before while), not inside the loop.
+        # Passo 3: formatta il messaggio e calcola il carico cognitivo
+        # Il carico viene calcolato qui e passato all'oracle — non ricalcolato dentro
         message = _format_message(action, state)
         cognitive_load = f_cognitive_load(state, message)
 
-        # Step 3b: Get oracle reply — pass cognitive_load + global_instructions to OracleAgent (ORC-03, FB-04, D-06, D-12)
+        # Passo 4: chiedi la risposta all'oracle.
+        # Se è un OracleAgent passa anche global_instructions e cognitive_load
         if isinstance(oracle, _OracleAgent):
             reply = oracle.reply(
                 state, message,
@@ -189,21 +186,19 @@ def run_conversation(
         else:
             reply = oracle.reply(state, message)
 
-        # Step 4: Parse oracle reply into FeedbackDelta list
-        # parse_feedback is the only permitted try/except boundary in Phase 2.
+        # Passo 5: trasforma la risposta dell'oracle in oggetti feedback strutturati.
+        # Se llm_client è None oppure la risposta è vuota, delta = []
         if llm_client is not None and reply.raw_text.strip():
             deltas = parse_feedback(reply.raw_text, state, llm_client)
         else:
             deltas = []
 
-        # Step 5: Apply feedback to state (pure function).
-        # global_instructions is passed in; f_next_state appends GlobalFeedback text in-place (FB-01).
+        # Passo 6: applica i feedback e produce il nuovo stato.
+        # global_instructions viene aggiornata in-place da f_next_state quando trova GlobalFeedback o InstructionalFeedback
         new_state = f_next_state(state, deltas, store, namer, hierarchy, id_to_text, global_instructions)
 
-        # Step 5b: Update OracleAgent delta window and detect contradictions (Phase 3 — ORC-04, D-09)
-        # IMPORTANT: use new_state.turn_index (AFTER f_next_state), not state.turn_index.
-        # Modification B must run AFTER f_next_state so the turn_index stored in the deque
-        # and referenced in drift_event records reflects the turn that just completed.
+        # Passo 7 (Fase 3): aggiorna la finestra scorrevole dei delta e controlla se il nuovo feedback contraddice qualcosa detto nei turni precedenti.
+        # Usa new_state.turn_index (dopo f_next_state), non state.turn_index — altrimenti il turno registrato nella finestra sarebbe sfasato di uno
         if isinstance(oracle, _OracleAgent) and deltas:
             contradiction_detected, contradicted_turn = oracle.update_delta_window(
                 deltas, new_state.turn_index
@@ -211,10 +206,10 @@ def run_conversation(
             reply.contradiction_detected = contradiction_detected
             reply.contradicted_turn = contradicted_turn
 
-        # Step 6: Write AuditLog (D-04: loop owns the JSONL write)
+        # Passo 8: scrive il nuovo stato su audit_log.jsonl
         append_to_audit_log(new_state, log_path)
 
-        # Step 6c: Log drift event to events sidecar if contradiction detected (Phase 3 — ORC-04, D-10)
+        # Passo 8b (Fase 3): se è stata rilevata una contraddizione, scrive drift_event su events.jsonl (file separato dall'audit log)
         if reply.contradiction_detected:
             _write_event({
                 "event": "drift_event",
@@ -223,11 +218,13 @@ def run_conversation(
                 "timestamp": new_state.timestamp,
             }, events_path)
 
-        # Step 6b: Call post_turn_callback if provided (D-22: projection recompute hook)
+        # Passo 9: chiama il callback post-turno se definito.
+        # Usato per ricalcolare la proiezione UMAP e salvare state.json nelle sessioni
         if post_turn_callback is not None:
             post_turn_callback(new_state, deltas)
 
-        # Step 7: Emit state update via SocketIO (skip if socketio is None — unit test mode)
+        # Passo 10: aggiorna il browser via SocketIO.
+        # Se socketio è None (test senza server) salta tutto
         if socketio is not None:
             import dataclasses
             socketio.emit("state_update", {
@@ -243,10 +240,10 @@ def run_conversation(
                 "cognitive_load": reply.turn_cognitive_load,
             })
 
-        # Step 8: Record feedback magnitude for diminishing-returns tracking (Phase 4)
+        # Registra quanti feedback ci sono stati questo turno. Usato dalla condizione dei rendimenti decrescenti (Phase 4)
         recent_magnitudes.append(float(len(deltas)))
 
-        # Step 9: Check stopping conditions
+        # Passo 11: controlla le condizioni di stop
         stop = check_stopping(
             turn_index=new_state.turn_index,
             oracle_satisfied=reply.satisfied,
@@ -254,7 +251,7 @@ def run_conversation(
             criteria=criteria,
         )
 
-        # Step 10: Advance state or break
+        # Avanza allo stato successivo o esce dal loop
         state = new_state
         if stop is not None:
             if socketio is not None:

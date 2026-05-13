@@ -1,7 +1,9 @@
 """
-strategy.py — StrategyProtocol, Action, RandomStrategy.
+strategy.py — Decide cosa fare al prossimo turno della conversazione.
 
-Phase 5 adds UncertaintyDrivenStrategy and BoundaryDrivenStrategy without changing this file.
+Ad ogni turno il sistema deve scegliere un'azione: mostrare tutti i cluster, mostrarne solo un sottoinsieme, fare una domanda all'oracle, o fermarsi.
+
+Questo file definisce le possibili azioni, l'interfaccia comune per le strategie, e la strategia della Phase 2 (RandomStrategy) che sceglie semplicemente a caso.
 """
 from __future__ import annotations
 
@@ -11,50 +13,50 @@ from typing import Literal, Protocol, runtime_checkable
 
 from src.state import ClusteringState
 
+"""
+class Action:
+    Un'azione che il sistema può compiere al prossimo turno.
 
+    action_type     — il tipo di azione. Quattro valori possibili:
+                        "show_full" → mostra tutti i cluster all'oracle
+                        "show_subset" → mostra solo alcuni cluster (richiede >= 2 cluster)
+                        "ask_question" → fai una domanda mirata all'oracle
+                        "stop" → ferma la conversazione
+
+    payload         — informazioni aggiuntive sull'azione, es. quale cluster mostrare o quale domanda fare.
+"""
 @dataclass
 class Action:
-    """
-    Represents one possible next action for the agent to take.
-
-    action_type: One of the four valid action types for Phase 2.
-    payload:     Optional metadata (cluster_id, item_ids, question_text, etc.).
-                 Phase 2 uses empty dict; Phase 5 enriches payloads.
-    """
     action_type: Literal["show_full", "show_subset", "ask_question", "stop"]
     payload: dict = field(default_factory=dict)
 
+"""
+class StrategyProtocol(Protocol):
+    L'interfaccia che qualsiasi strategia deve rispettare.
 
+    Basta avere un metodo select(state, uncertainty_report) che restituisce un'Action. Non serve ereditare da questa classe.
+"""
 @runtime_checkable
 class StrategyProtocol(Protocol):
-    """
-    Interface for action-selection strategies.
-
-    Phase 2: RandomStrategy (uniform random over valid actions).
-    Phase 5: UncertaintyDrivenStrategy, BoundaryDrivenStrategy.
-
-    Structural subtyping: implementations do NOT need to inherit from this class.
-    """
     def select(self, state: ClusteringState, uncertainty_report: "object") -> Action:
         ...
 
+"""
+def _enumerate_valid_actions(
+    Costruisce la lista di azioni disponibili in base allo stato corrente.
 
+    Regole:
+        - "show_full" è sempre disponibile.
+        - "ask_question" è disponibile se c'è almeno un cluster.
+        - "show_subset" è disponibile solo se ci sono almeno 2 cluster (non ha senso mostrare un "sottoinsieme" se ce n'è solo uno).
+        - "stop" è sempre disponibile.
+
+    La lista non può mai essere vuota — se lo fosse sarebbe un bug nel sistema.
+"""
 def _enumerate_valid_actions(
     state: ClusteringState,
     uncertainty_report: object,
 ) -> list[Action]:
-    """
-    Build a non-empty list of valid Action objects for the current state.
-
-    Phase 2 payload is always {} — Phase 5 enriches payloads with specific cluster_ids
-    and item_ids drawn from the uncertainty_report.
-
-    Rules:
-      - "show_full"    always valid
-      - "ask_question" always valid if there are clusters (any question makes sense)
-      - "show_subset"  valid if there are >= 2 clusters (subset requires at least 2 to show)
-      - "stop"         always valid (loop checks oracle satisfaction separately)
-    """
     actions: list[Action] = []
     actions.append(Action(action_type="show_full"))
     if len(state.clusters) > 0:
@@ -67,15 +69,14 @@ def _enumerate_valid_actions(
     )
     return actions
 
-
+"""
 class RandomStrategy:
-    """
-    Phase 2 implementation: uniform random selection over valid actions.
+    La strategia della Phase 2: sceglie un'azione a caso tra quelle disponibili.
 
-    Uses a seeded random.Random instance (NOT the global random module) to ensure
-    determinism when a seed is provided. Tests always pass a seed (T-02-07).
-    """
-
+    Usa random.Random(seed) — un generatore casuale privato con seed fisso, non il generatore globale di Python. Questo garantisce che con lo stesso
+    seed la strategia faccia sempre le stesse scelte, rendendo i test completamente deterministici e riproducibili.
+"""
+class RandomStrategy:
     def __init__(self, seed: int | None = None) -> None:
         self._rng = random.Random(seed)
 

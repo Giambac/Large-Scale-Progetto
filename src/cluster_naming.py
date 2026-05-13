@@ -1,27 +1,29 @@
 """
-cluster_naming.py — LLM-based cluster name and description generation (FOUND-02).
+cluster_naming.py — Chiede all'LLM di dare un nome e una descrizione a ogni cluster.
 
-Design: ClusterNamer is a Protocol (structural subtyping) so any object
-that implements name_cluster(sample_texts, cluster_id) -> dict works.
-This enables swapping Anthropic/OpenAI/Google clients without changing clustering.py.
+Questo file risolve un problema semplice: dopo che HDBSCAN o KMeans hanno raggruppato le recensioni, i cluster hanno solo un numero identificativo.
+Bisogna dare loro un nome leggibile e una descrizione.
 
-Concrete implementations:
-  - AnthropicClusterNamer: uses claude-haiku-4-5 (ANTHROPIC_API_KEY)
-  - GoogleClusterNamer: uses gemini-2.0-flash (GOOGLE_API_KEY / Google AI Studio)
-  - OpenAIClusterNamer: uses gpt-4o-mini (OPENAI_API_KEY)
+Il sistema manda le prime 5 recensioni di ogni cluster all'LLM e chiede di rispondere con un JSON del tipo:
+    {"name": "Knitting Supplies", "description": "Reviews about yarn and needles."}
+
+Design: ClusterNamer è un'interfaccia. Qualsiasi oggetto che ha un metodo name_cluster() con la firma giusta va bene — non serve ereditare nulla.
+Questo permette di usare Anthropic, Google o OpenAI intercambiabilmente senza cambiare nient'altro nel sistema.
 """
 from __future__ import annotations
 
 import json
 from typing import Protocol, runtime_checkable
 
+"""
+class ClusterNamer(Protocol):
+    L'interfaccia che qualsiasi namer deve rispettare.
 
+    Basta avere un metodo name_cluster(sample_texts, cluster_id) che restituisce un dizionario con "name" e "description".
+    Non serve ereditare da questa classe.
+"""
 @runtime_checkable
 class ClusterNamer(Protocol):
-    """
-    Protocol for LLM-based cluster naming.
-    Any object implementing name_cluster() satisfies this interface.
-    """
     def name_cluster(
         self,
         sample_texts: list[str],
@@ -42,29 +44,26 @@ class ClusterNamer(Protocol):
         """
         ...
 
+"""
+    Funzione base che chiama un client Anthropic per nominare un cluster.
 
+    È la funzione condivisa usata da AnthropicClusterNamer. Gli altri namer Google, OpenAI) hanno la loro logica di chiamata perché i loro SDK hanno interfacce diverse.
+
+    Cosa fa:
+        1. Prende le prime max_samples recensioni (default 5).
+        2. Costruisce un prompt che chiede all'LLM di rispondere SOLO con JSON.
+        3. Chiama l'API.
+        4. Rimuove eventuali backtick markdown dalla risposta.
+        5. Parsa il JSON e verifica che contenga "name" e "description".
+
+    Crasha subito se le chiavi mancano — una risposta malformata dell'LLM non deve propagarsi silenziosamente nel sistema.
+"""
 def name_cluster(
     client: object,
     sample_texts: list[str],
     cluster_id: int,
     max_samples: int = 5,
 ) -> dict[str, str]:
-    """
-    Call an Anthropic-compatible client to name a cluster.
-
-    Args:
-        client: Anthropic client instance (anthropic.Anthropic).
-        sample_texts: review texts from this cluster.
-        cluster_id: integer cluster ID (for prompt context only).
-        max_samples: number of sample texts to include in prompt (default 5).
-
-    Returns:
-        {"name": str, "description": str}
-
-    Raises:
-        AssertionError: if LLM returns JSON without "name" or "description" keys.
-            Message contains "bad schema" (tested by test_cluster_naming.py).
-    """
     samples = sample_texts[:max_samples]
     assert len(samples) > 0, f"Cannot name cluster {cluster_id}: no sample texts provided"
 
@@ -85,7 +84,7 @@ def name_cluster(
     )
 
     raw_text = response.content[0].text.strip()
-    # Strip markdown code fences if the model wraps its JSON response
+    # Rimuove i backtick markdown se l'LLM li ha aggiunti
     if raw_text.startswith("```"):
         raw_text = raw_text.split("```")[1]
         if raw_text.startswith("json"):
@@ -93,6 +92,7 @@ def name_cluster(
         raw_text = raw_text.strip()
     result = json.loads(raw_text)
 
+    # Verifica che la risposta abbia le due chiavi richieste e che non siano vuote
     assert "name" in result and "description" in result, (
         f"LLM returned bad schema for cluster {cluster_id}: {result}"
     )
@@ -105,13 +105,12 @@ def name_cluster(
 
     return {"name": result["name"], "description": result["description"]}
 
-
+"""
 class AnthropicClusterNamer:
-    """
-    Concrete ClusterNamer backed by an Anthropic client.
-    Satisfies the ClusterNamer Protocol.
-    """
-
+    Namer che usa il client Anthropic (Claude Haiku).
+    Delega interamente alla funzione name_cluster() qui sopra.
+"""
+class AnthropicClusterNamer:
     def __init__(self, client: object) -> None:
         self._client = client
 
@@ -122,16 +121,15 @@ class AnthropicClusterNamer:
     ) -> dict[str, str]:
         return name_cluster(self._client, sample_texts, cluster_id)
 
+"""
+    Namer che usa Google AI Studio (Gemini).
 
+    Stessa logica di AnthropicClusterNamer ma con l'SDK di Google, che ha un'interfaccia diversa (client.models.generate_content invece di client.messages.create).
+
+    Richiede: pip install google-generativeai
+    Chiave API: variabile d'ambiente GOOGLE_API_KEY.
+"""
 class GoogleClusterNamer:
-    """
-    Concrete ClusterNamer backed by Google AI Studio (Gemini).
-    Satisfies the ClusterNamer Protocol.
-
-    Requires: pip install google-generativeai
-    API key: set GOOGLE_API_KEY env var (Google AI Studio key).
-    """
-
     def __init__(self, api_key: str, model: str = "gemini-2.0-flash") -> None:
         from google import genai  # type: ignore[import]
         self._client = genai.Client(api_key=api_key)
@@ -176,16 +174,16 @@ class GoogleClusterNamer:
         )
         return {"name": result["name"], "description": result["description"]}
 
-
+"""
 class OpenAIClusterNamer:
-    """
-    Concrete ClusterNamer backed by OpenAI.
-    Satisfies the ClusterNamer Protocol.
+    Namer che usa OpenAI (GPT-4o-mini).
 
-    Requires: pip install openai
-    API key: set OPENAI_API_KEY env var.
-    """
+    Stessa logica degli altri namer ma con l'SDK OpenAI, che usa client.chat.completions.create e response.choices[0].message.content.
 
+    Richiede: pip install openai
+    Chiave API: variabile d'ambiente OPENAI_API_KEY.
+"""
+class OpenAIClusterNamer:
     def __init__(self, api_key: str, model: str = "gpt-4o-mini") -> None:
         from openai import OpenAI  # type: ignore[import]
         self._client = OpenAI(api_key=api_key)
@@ -234,16 +232,19 @@ class OpenAIClusterNamer:
         )
         return {"name": result["name"], "description": result["description"]}
 
+"""
+def name_all_clusters( )
+    Nomina tutti i cluster in una volta sola.
 
+    Viene chiamata una volta sola da build_initial_clustering_state per dare nome e descrizione a tutti i cluster iniziali.
+
+    Restituisce un dizionario cluster_id -> {"name": ..., "description": ...}.
+"""
 def name_all_clusters(
     cluster_items: dict[int, list[int]],
     id_to_text: dict[int, str],
     namer: ClusterNamer,
 ) -> dict[int, dict[str, str]]:
-    """
-    Name all clusters. Returns {cluster_id: {"name": str, "description": str}}.
-    Called once during build_initial_clustering_state.
-    """
     results = {}
     for cluster_id, item_ids in sorted(cluster_items.items()):
         sample_texts = [id_to_text[i] for i in item_ids[:5]]

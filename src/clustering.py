@@ -1,14 +1,18 @@
 """
-clustering.py — HDBSCAN clustering and ClusteringState assembly (FOUND-02, FOUND-03).
+clustering.py — Esegue il clustering sugli embeddings e produce il primo stato.
 
-CRITICAL FACTS (from research):
-- Use hdbscan.all_points_membership_vectors(clusterer) for soft probs.
-- prediction_data=True MUST be set in the HDBSCAN constructor.
-- Noise points (label == -1) are reassigned to argmax(soft_probs) to ensure
-  complete assignments (D-13 requires all N items in assignments dict).
-- all_points_membership_vectors returns unnormalized membership weights;
-  rows are normalized to sum to 1.0 before storing in ClusteringState (FOUND-03).
+Questo file fa due cose:
+    1. Esegue l'algoritmo di clustering (HDBSCAN o KMeans) sugli embeddings e produce le assegnazioni e le probabilità morbide.
+    2. Assembla il ClusteringState iniziale al turno 0 — quello da cui parte tutta la conversazione.
+
+Due backend disponibili, entrambi con la stessa interfaccia:
+    - HDBSCANBackend : trova automaticamente quanti cluster esistono nei dati.
+    - KMeansBackend : richiede di sapere quanti cluster creare, ma lo sceglie automaticamente via BIC.
+
+La funzione principale è build_initial_clustering_state — prende gli embeddings, chiama il backend, nomina i cluster con l'LLM, e restituisce il ClusteringState
+al turno 0 pronto per iniziare la conversazione.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -25,28 +29,26 @@ if TYPE_CHECKING:
     from src.cluster_naming import ClusterNamer
 
 
-# HDBSCAN hyperparameters — documented as named constants, not magic numbers.
-# Starting values for ~15K 768-dim review embeddings.
-# Adjust if run_hdbscan produces 0 or 100+ clusters.
-MIN_CLUSTER_SIZE = 50    # ~0.3% of 15K; typical for dense text embedding spaces
-MIN_SAMPLES = 10         # noise sensitivity; lower = fewer noise points
+# Parametri HDBSCAN per ~15K recensioni con embeddings da 768 dimensioni.
+# Se il clustering produce 0 o troppi cluster, regolare questi valori.
+MIN_CLUSTER_SIZE = 50    # circa 0.3% di 15K — soglia minima per formare un cluster
+MIN_SAMPLES = 10         # sensibilità al rumore — valore più basso = meno punti rumore
 
-# Temperature for KMeans soft probability computation (D-20).
-# softmax(-dist / T): T=1.0 means raw L2 distances, no scaling.
-# Named constant — not a CLI parameter.
+# Temperatura per il calcolo delle probabilità morbide di KMeans.
+# Con 1.0 le distanze dai centroidi vengono usate direttamente senza scalatura.
 KMEANS_SOFTMAX_TEMP = 1.0
 
+"""
+class ClusteringBackend(Protocol):
+    L'interfaccia che qualsiasi backend di clustering deve rispettare.
 
+    Basta implementare fit(embeddings) che restituisce (labels, soft_probs).
+    Non serve ereditare da questa classe.
+
+    Garanzia: fit() non restituisce mai etichette -1 — ogni recensione ha sempre un cluster assegnato.
+"""
 @runtime_checkable
 class ClusteringBackend(Protocol):
-    """
-    Protocol for clustering backends (D-16).
-
-    Any backend must implement fit() with this exact signature.
-    HDBSCANBackend and KMeansBackend both satisfy this Protocol.
-    Adding future backends (LLM-first, etc.) requires only implementing fit().
-    """
-
     def fit(self, embeddings: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         Fit the backend to embeddings and return (labels, soft_probs).
@@ -60,15 +62,14 @@ class ClusteringBackend(Protocol):
         """
         ...
 
-
+"""
 class HDBSCANBackend:
-    """
-    HDBSCAN clustering backend implementing ClusteringBackend Protocol (D-16).
+    Backend che usa HDBSCAN — trova automaticamente quanti cluster esistono.
 
-    Wraps run_hdbscan() and assign_noise_to_nearest() into the fit() interface.
-    Noise points (-1) are reassigned to argmax(soft_probs) to guarantee no -1 labels.
-    """
-
+    Avvolge run_hdbscan() e assign_noise_to_nearest() nell'interfaccia fit().
+    I punti rumore (etichetta -1) vengono sempre forzati nel cluster a cui assomigliano di più prima di restituire il risultato.
+"""
+class HDBSCANBackend:
     def __init__(
         self,
         min_cluster_size: int | None = None,
@@ -95,19 +96,16 @@ class HDBSCANBackend:
         assert np.all(resolved_labels >= 0), "BUG: HDBSCANBackend.fit produced -1 labels"
         return resolved_labels, soft_probs
 
-
+"""
 class KMeansBackend:
-    """
-    K-means clustering backend implementing ClusteringBackend Protocol (D-16).
+    Backend che usa KMeans — richiede K ma lo sceglie automaticamente.
 
-    K is selected once at first fit() call via BIC on Gaussian Mixture Models for K=2..sqrt(N)
-    (D-17). K is then FIXED — changes only through oracle intent (no auto-reoptimization).
+    K viene scelto al primo fit() usando il BIC (Bayesian Information Criterion): prova K=2, K=3, ... fino a K=√N e sceglie quello che minimizza il BIC.
+    Una volta scelto, K rimane fisso per tutta la sessione — cambia solo se l'oracle fa un'operazione di split o merge.
 
-    Soft probabilities use softmax of negative centroid distances (D-19):
-        soft_probs[i][c] = softmax(-dist(item_i, centroid_c) / KMEANS_SOFTMAX_TEMP)
-    Temperature T = KMEANS_SOFTMAX_TEMP = 1.0 (D-20).
-    """
-
+    Le probabilità morbide vengono calcolate con softmax sulle distanze dai centroidi: più una recensione è vicina a un centroide, più alta è la sua probabilità per quel cluster.
+"""
+class KMeansBackend:
     def __init__(self) -> None:
         # K is set lazily on first fit() call (we need N to compute sqrt(N)).
         # Can be overridden directly for testing: backend._k = 3
@@ -160,11 +158,9 @@ class KMeansBackend:
 
     def _select_k_via_bic(self, embeddings: np.ndarray) -> int:
         """
-        Fit GMM for K=2..int(sqrt(N)) and return K that minimizes BIC (D-17).
+        Prova GMM per K=2..√N e restituisce il K che minimizza il BIC.
 
-        For N=12000 this is K=2..109. Each GMM fit uses 'diag' covariance for speed
-        (full covariance on 768-dim data would be prohibitively slow).
-        K is logged externally by the caller (web/app.py) for AuditLog reproducibility.
+        Usa covarianza diagonale per velocità — la covarianza piena su 768 dimensioni sarebbe troppo lenta. Massimo 50 iterazioni per K.
         """
         N = embeddings.shape[0]
         k_max = max(2, int(math.sqrt(N)))
@@ -186,27 +182,21 @@ class KMeansBackend:
         assert best_k >= 2, f"BIC selected k={best_k} < 2 — impossible"
         return best_k
 
+    """
+    def _compute_soft_probs( )
+        Calcola le probabilità morbide con softmax sulle distanze negative dai centroidi.
+
+        Formula: soft_probs[i][c] = softmax(-distanza(recensione_i, centroide_c) / temperatura)
+
+        Più una recensione è vicina a un centroide, più alta è la sua probabilità per quel cluster. Usa la sottrazione del massimo di riga per stabilità numerica
+        (evita overflow nell'exp).
+    """
     @staticmethod
     def _compute_soft_probs(
         embeddings: np.ndarray,
         centroids: np.ndarray,
         temperature: float,
     ) -> np.ndarray:
-        """
-        Compute soft assignment probabilities via softmax of negative centroid distances (D-19).
-
-        soft_probs[i][c] = softmax(-dist(item_i, centroid_c) / temperature)
-
-        Uses L2 distance. Numerically stable via max-subtraction before exp.
-
-        Args:
-            embeddings: shape (N, dim)
-            centroids:  shape (K, dim)
-            temperature: float > 0 (KMEANS_SOFTMAX_TEMP = 1.0)
-
-        Returns:
-            soft_probs: shape (N, K) float32, rows sum to 1.0
-        """
         assert temperature > 0, f"temperature must be positive, got {temperature}"
         # Compute pairwise L2 distances: shape (N, K)
         # dist[i,c] = ||embedding[i] - centroid[c]||_2
@@ -221,31 +211,25 @@ class KMeansBackend:
         soft_probs = exp_logits / exp_logits.sum(axis=1, keepdims=True)
         return soft_probs.astype(np.float32)
 
+"""
+def run_hdbscan( )
+    Esegue HDBSCAN sugli embeddings e restituisce (labels, soft_probs).
 
+    HDBSCAN trova automaticamente quanti cluster esistono — non bisogna specificare K a priori. I punti che non appartengono chiaramente a
+    nessun cluster ricevono l'etichetta -1 (rumore).
+
+    Due dettagli tecnici importanti:
+        - prediction_data=True DEVE essere impostato nel costruttore, altrimenti all_points_membership_vectors() non funziona.
+        - Le righe di soft_probs vengono normalizzate a 1.0 perché HDBSCAN le restituisce non normalizzate.
+
+    Auto-scaling di min_cluster_size: se il dataset è piccolo (es. nei test), il valore viene scalato automaticamente per evitare output tutto-rumore.
+    Con 15K recensioni il valore rimane 50. Con 80 recensioni nei test diventa 8.
+"""
 def run_hdbscan(
     embeddings: np.ndarray,
     min_cluster_size: int | None = None,
     min_samples: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Fit HDBSCAN on embeddings and return (labels, soft_probs).
-
-    Args:
-        embeddings: shape (N, dim) float32 array from EmbeddingStore.
-        min_cluster_size: override MIN_CLUSTER_SIZE constant (for testing).
-        min_samples: override MIN_SAMPLES constant (for testing).
-
-    Returns:
-        labels: shape (N,) int array. -1 means noise.
-        soft_probs: shape (N, K) float32. K = number of discovered non-noise clusters.
-                    Rows sum to approximately 1.0 (normalized after HDBSCAN).
-
-    Asserts:
-        - At least 1 non-noise cluster found (crashes on all-noise output).
-        - soft_probs.shape[0] == N.
-        - soft_probs.shape[1] > 0 (at least 1 cluster column).
-        - All rows of soft_probs sum to ~1.0 after normalization.
-    """
     import hdbscan  # lazy import — hdbscan is optional; fails loudly here if not installed
     assert embeddings.ndim == 2, f"Expected 2D array, got shape {embeddings.shape}"
     assert embeddings.shape[0] > 0, "Cannot cluster empty embedding set"
@@ -253,8 +237,7 @@ def run_hdbscan(
     # Auto-scale MIN_CLUSTER_SIZE when N is small (e.g., in tests with synthetic data).
     # For production (~15K points): max(5, min(50, 1500)) = 50.
     # For tests (~80 points): max(5, min(50, 8)) = 8.
-    # This preserves the MIN_CLUSTER_SIZE constant as the production ceiling while
-    # allowing tests to run on small synthetic datasets without all-noise output.
+    # This preserves the MIN_CLUSTER_SIZE constant as the production ceiling while allowing tests to run on small synthetic datasets without all-noise output.
     n_items = embeddings.shape[0]
     _min_cluster_size = (
         min_cluster_size
@@ -302,22 +285,19 @@ def run_hdbscan(
 
     return clusterer.labels_, soft_probs
 
+"""
+def assign_noise_to_nearest(
+    Risolve i punti rumore (-1) assegnandoli al cluster con probabilità più alta.
 
+    HDBSCAN assegna -1 alle recensioni che non appartengono chiaramente a nessun cluster. Questa funzione li forza nel cluster a cui assomigliano 
+    di più guardando l'argmax delle soft_probs.
+
+    Restituisce un dizionario item_id -> cluster_id completo, senza -1.
+"""
 def assign_noise_to_nearest(
     labels: np.ndarray,
     soft_probs: np.ndarray,
 ) -> dict[int, int]:
-    """
-    Create a complete hard assignment mapping with no noise labels (-1).
-
-    Noise points (label == -1) are assigned to the cluster with the highest
-    soft probability for that point (argmax). This preserves the anytime
-    behavior requirement (CLUS-01): all N items always have an assignment.
-
-    Returns:
-        dict[int, int] — {item_id: cluster_id} for all N items.
-        cluster_id is always >= 0 (no -1 values).
-    """
     assert len(labels) == soft_probs.shape[0], (
         f"labels length {len(labels)} != soft_probs rows {soft_probs.shape[0]}"
     )
@@ -334,7 +314,21 @@ def assign_noise_to_nearest(
     assert len(assignments) == len(labels), "BUG: missing item_ids in assignments"
     return assignments
 
+"""
+def build_initial_clustering_state( )
+    Pipeline completa: embeddings → ClusteringState al turno 0.
 
+    È il punto di ingresso del sistema — da qui parte tutta la conversazione.
+
+    Quattro passi in sequenza:
+        1. Esegue il backend di clustering (default: HDBSCANBackend) sugli embeddings.
+        2. Raggruppa le recensioni per cluster_id.
+        3. Chiama il namer per dare un nome e una descrizione a ogni cluster.
+        4. Assembla il ClusteringState e verifica che sia completo.
+
+    Se backend=None usa HDBSCANBackend. Passare un KMeansBackend usa KMeans.
+    Il codice che chiama questa funzione senza backend continua a funzionare come prima — compatibilità garantita.
+"""
 def build_initial_clustering_state(
     embeddings: np.ndarray,
     records: list[dict],
@@ -342,24 +336,6 @@ def build_initial_clustering_state(
     min_cluster_size: int | None = None,
     backend: "ClusteringBackend | None" = None,
 ) -> ClusteringState:
-    """
-    Full pipeline: embeddings → ClusteringState at turn_index=0.
-
-    1. Run clustering backend (default: HDBSCANBackend) → (labels, soft_probs_matrix)
-    2. Group item_ids by cluster_id
-    3. LLM-name each cluster using sample texts
-    4. Assemble ClusteringState
-
-    Args:
-        embeddings: shape (N, dim) from EmbeddingStore.get_all()
-        records: list of {"item_id": int, "text": str} dicts (all N items)
-        namer: ClusterNamer instance for LLM cluster naming
-        min_cluster_size: passed to HDBSCANBackend when backend is None (default HDBSCAN path)
-        backend: ClusteringBackend instance. Defaults to HDBSCANBackend when None.
-
-    Returns:
-        ClusteringState at turn_index=0
-    """
     assert len(records) == len(embeddings), (
         f"Record count {len(records)} != embedding count {len(embeddings)}"
     )

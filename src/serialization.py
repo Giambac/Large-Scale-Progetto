@@ -1,15 +1,16 @@
 """
-serialization.py — JSONL serialization for ClusteringState (FOUND-04).
+serialization.py — Salva e rilegge i ClusteringState su file JSONL.
 
-The AuditLog is append-only JSONL: one JSON object per line, one line per turn.
-Each line is a complete ClusteringState snapshot.
+Questo file risolve un problema pratico: come si salva un ClusteringState su file e lo si rilegge identico al turno successivo o alla sessione successiva.
 
-Key serialization risks:
-- numpy types: float32 raises TypeError with json.dumps. Custom encoder handles this.
-- JSON dict key type loss: json.loads always deserializes keys as str.
-  deserialize_state MUST cast assignments and soft_probs dict keys to int with int(k).
+Due problemi tecnici da gestire:
+    1. Numpy usa float32 per i numeri — JSON non lo conosce e crasha. 
+    Il _StateEncoder converte automaticamente tutti i tipi numpy in tipi Python standard prima di scrivere.
+    2. JSON converte sempre le chiavi dei dizionari in stringhe. Quindi {0: "cluster_0"} diventa {"0": "cluster_0"} sul file. 
+    Quando si rilegge, state.assignments[0] darebbe KeyError perché la chiave è la stringa "0". 
+    deserialize_state risolve questo riconvertendo ogni chiave in int con int(k).
 
-D-14: Deserialization must reproduce the exact same object — no data loss.
+Il file di log (audit_log.jsonl) è append-only: una riga per turno, una riga = un ClusteringState completo. Non si sovrascrive mai.
 """
 from __future__ import annotations
 
@@ -22,17 +23,17 @@ import numpy as np
 
 from src.state import Cluster, ClusteringState
 
-
+"""
 class _StateEncoder(json.JSONEncoder):
-    """
-    Custom JSON encoder that handles:
-    - dataclasses (via dataclasses.asdict)
-    - numpy scalar types (np.integer, np.floating)
-    - numpy arrays (via .tolist())
+    Encoder JSON personalizzato per gestire i tipi Python/numpy non standard.
 
-    Applied by serialize_state via cls=_StateEncoder.
-    """
-
+    Gestisce tre casi che json.dumps non sa gestire di default:
+        - dataclass : convertito in dizionario con dataclasses.asdict()
+        - np.integer : convertito in int Python normale
+        - np.floating : convertito in float Python normale
+        - np.ndarray : convertito in lista Python con .tolist()
+"""
+class _StateEncoder(json.JSONEncoder):
     def default(self, obj: Any) -> Any:
         if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
             return dataclasses.asdict(obj)
@@ -44,17 +45,15 @@ class _StateEncoder(json.JSONEncoder):
             return obj.tolist()
         return super().default(obj)
 
-
+"""
 def serialize_state(state: ClusteringState) -> str:
-    """
-    Serialize a ClusteringState to a single JSON line.
+    Converte un ClusteringState in una singola riga JSON senza newline.
 
-    Returns a string with no leading/trailing whitespace and no trailing newline.
-    The string is valid JSON parseable by json.loads().
+    La riga può essere scritta direttamente nel file JSONL. Non contiene spazi extra o indentazione — una riga, un oggetto.
 
-    Raises TypeError (re-raised from json.dumps) if state contains an
-    unhandled non-serializable type — this is intentional (fail loudly).
-    """
+    Crasha se lo stato contiene tipi non serializzabili non gestiti dall'encoder.
+"""
+def serialize_state(state: ClusteringState) -> str:
     assert isinstance(state, ClusteringState), (
         f"serialize_state expects ClusteringState, got {type(state)}"
     )
@@ -62,25 +61,17 @@ def serialize_state(state: ClusteringState) -> str:
     assert "\n" not in line, "BUG: serialized state contains newline (would break JSONL)"
     return line
 
-
+"""
 def deserialize_state(line: str) -> ClusteringState:
-    """
-    Reconstruct a ClusteringState from a JSONL line.
+    Ricostruisce un ClusteringState da una riga JSONL.
 
-    CRITICAL: JSON object keys are always strings. This function explicitly
-    casts assignments and soft_probs dict keys to int with int(k).
-    Failing to do this causes KeyError when code does state.assignments[0].
+    Punto critico: JSON converte sempre le chiavi dei dizionari in stringhe.
+    Questa funzione riconverte le chiavi di assignments e soft_probs da stringa a int con int(k). 
+    Senza questa conversione, state.assignments[0] darebbe KeyError perché la chiave è diventata "0".
 
-    Args:
-        line: A single JSON line (from the AuditLog or serialize_state output).
-
-    Returns:
-        ClusteringState with int keys in assignments and soft_probs.
-
-    Raises:
-        json.JSONDecodeError: if line is not valid JSON.
-        KeyError/TypeError: if required fields are missing (fail loudly).
-    """
+    Crasha se la riga non è JSON valido o se mancano campi obbligatori.
+"""
+def deserialize_state(line: str) -> ClusteringState:
     d = json.loads(line)
 
     assert "turn_index" in d, f"Missing 'turn_index' in deserialized state: {list(d.keys())}"
@@ -111,18 +102,14 @@ def deserialize_state(line: str) -> ClusteringState:
         soft_probs=soft_probs,
     )
 
-
+"""
 def append_to_audit_log(state: ClusteringState, log_path: str) -> None:
-    """
-    Append one ClusteringState as a JSON line to the AuditLog file.
+    Aggiunge un ClusteringState come nuova riga al file di log.
 
-    Creates the file (and parent directories) if it does not exist (append mode).
-    Each call writes exactly one line (serialize_state(state) + newline).
-
-    Args:
-        state: The ClusteringState to append.
-        log_path: Path to the JSONL AuditLog file (e.g. "audit_log.jsonl").
-    """
+    Il file viene creato se non esiste (modalità append). Ogni chiamata aggiunge esattamente una riga. 
+    Il file non viene mai sovrascritto — cresce di una riga per turno per tutta la durata della sessione.
+"""
+def append_to_audit_log(state: ClusteringState, log_path: str) -> None:
     assert isinstance(log_path, str) and log_path, "log_path must be a non-empty string"
     parent = os.path.dirname(log_path)
     if parent:
@@ -131,14 +118,13 @@ def append_to_audit_log(state: ClusteringState, log_path: str) -> None:
     with open(log_path, "a", encoding="utf-8") as f:
         f.write(line + "\n")
 
+"""
+    Rilegge tutti i turni dal file di log.
 
+    Ogni riga non vuota viene deserializzata in un ClusteringState.
+    Crasha se il file non esiste o se è completamente vuoto — un log vuoto indica che qualcosa è andato storto durante la sessione.
+"""
 def load_audit_log(log_path: str) -> list[ClusteringState]:
-    """
-    Load all turns from the AuditLog.
-
-    Reads each non-empty line and deserializes to ClusteringState.
-    Asserts that at least one turn exists (empty AuditLog is an error).
-    """
     assert os.path.exists(log_path), f"AuditLog not found: {log_path}"
     states = []
     with open(log_path, encoding="utf-8") as f:

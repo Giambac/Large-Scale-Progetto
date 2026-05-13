@@ -1,73 +1,97 @@
 """
-feedback.py — FeedbackDelta union type and frozen dataclasses.
+feedback.py — I tipi di feedback che l'oracle può dare al sistema.
 
-Five feedback types represent all oracle intent categories:
-  - GlobalFeedback:       high-level re-clustering instruction (type-priority: 1st)
-  - SplitFeedback:        split one cluster into two (type-priority: 2nd)
-  - MergeFeedback:        merge two clusters into one (type-priority: 3rd)
-  - MoveItemFeedback:     move a single item to a target cluster (type-priority: 4th)
-  - InstructionalFeedback: soft instructional hint with no direct structural effect (type-priority: 5th)
+Questo file definisce il linguaggio strutturato con cui l'oracle comunica cosa vuole cambiare nel clustering. 
+Invece di testo libero, ogni richiesta dell'oracle diventa un oggetto Python preciso con campi ben definiti.
 
-FeedbackDelta = Union alias over all five types. Compound oracle messages
-produce multiple FeedbackDelta objects, applied in type-priority order per D-07.
+Cinque tipi di feedback, ognuno per un tipo diverso di richiesta:
+  1. GlobalFeedback             — istruzione generale, es. "troppi cluster"
+  2. SplitFeedback              — dividere un cluster in due
+  3. MergeFeedback              — unire due cluster in uno
+  4. MoveItemFeedback           — spostare una singola recensione in un altro cluster
+  5. InstructionalFeedback      — suggerimento soft, es. "tratta X e Y come sinonimi"
 
-Module constants:
-  ORACLE_MOVE_CONFIDENCE      — soft_probs override value for point-move (D-10, 0.95)
-  UNIFORM_FALLBACK_THRESHOLD  — zero-sum guard for point-move redistribution edge case
+Quando l'oracle scrive un messaggio con più richieste, il parser produce una lista di questi oggetti. Vengono poi applicati nell'ordine indicato sopra 
+— prima i feedback globali, poi split e merge, poi spostamenti singoli, poi i suggerimenti soft.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Union
 
-# Named constants — not magic numbers inline (per CONTEXT.md Specifics and D-10)
+# Quando l'oracle sposta una recensione, il sistema imposta la sua probabilità per il cluster di destinazione a 0.95 — quasi certezza.
 ORACLE_MOVE_CONFIDENCE: float = 0.95
+
+# Guardia per un caso limite: se dopo uno spostamento tutte le probabilità rimanenti fossero zero, la distribuzione diventa uniforme invece di crashare.
 UNIFORM_FALLBACK_THRESHOLD: float = 1e-9
 
+"""
+class SplitFeedback:
+    L'oracle vuole dividere un cluster in due.
 
+    cluster_id          — quale cluster dividere.
+    seed_item_ids       — recensioni che l'oracle indica come rappresentative dei due nuovi gruppi. 
+                          Può essere una lista vuota: in quel caso il sistema decide da solo come dividere usando KMeans.
+
+    frozen=True : l'oggetto non può essere modificato dopo la creazione.
+    Se si prova a cambiare un campo il programma crasha immediatamente.
+    Questo evita che il feedback venga alterato accidentalmente mentre viene processato dal sistema.
+"""
 @dataclass(frozen=True)
 class SplitFeedback:
-    """Oracle requests splitting cluster_id into two sub-clusters.
-
-    seed_item_ids: representative items the oracle names for each sub-cluster.
-    May be empty — empty list triggers k-means++ fallback initialization (D-08).
-    Uses list[int] to match the JSON array type produced by the feedback parser.
-    """
     cluster_id: int
     seed_item_ids: list[int]
 
+"""
+class MergeFeedback:
+    L'oracle vuole unire due cluster in uno solo.
 
+    cluster_a_id e cluster_b_id vengono eliminati e ne viene creato uno nuovo.
+    Le loro probabilità vengono sommate e rinormalizzate.
+"""
 @dataclass(frozen=True)
 class MergeFeedback:
-    """Oracle requests merging cluster_a_id and cluster_b_id into one cluster."""
     cluster_a_id: int
     cluster_b_id: int
 
+"""
+class MoveItemFeedback:
+    L'oracle vuole spostare una singola recensione in un altro cluster.
 
+    item_id                 — quale recensione spostare.
+    target_cluster_id       — in quale cluster spostarla.
+"""
 @dataclass(frozen=True)
 class MoveItemFeedback:
-    """Oracle requests moving item_id into target_cluster_id."""
     item_id: int
     target_cluster_id: int
 
+"""
+class GlobalFeedback:
+    Istruzione generale sul clustering, senza riferimento a un cluster specifico.
 
+    Esempi: "troppi cluster", "concentrati sui reclami di fatturazione".
+    È il feedback con il peso più alto perché indica una preferenza strutturale ampia. Il testo viene salvato e usato nei prompt dei turni successivi.
+"""
 @dataclass(frozen=True)
 class GlobalFeedback:
-    """High-level instruction that may trigger a full re-clustering.
-
-    Carries highest type-priority weight (global → cluster → point → instructional).
-    """
     instruction_text: str
 
+"""
+class InstructionalFeedback:
+    Suggerimento soft che non cambia direttamente la struttura dei cluster.
 
+    Esempi: "tratta 'errore' e 'fail' come sinonimi", "dai più peso alla qualità".
+    È il feedback con il peso più basso. Come GlobalFeedback, il testo viene salvato e iniettato nei prompt successivi per influenzare il naming.
+"""
 @dataclass(frozen=True)
 class InstructionalFeedback:
-    """Soft instructional hint — no direct structural cluster operation."""
     instruction_text: str
 
 
-# Union alias — ordering matches type-priority dispatch in f_next_state (D-07):
-# global → cluster-level (split/merge) → point-level (move_item) → instructional
+# Alias che raggruppa tutti e cinque i tipi in uno solo.
+# Usato come tipo nei parametri delle funzioni che accettano qualsiasi feedback.
+# L'ordine riflette la priorità di applicazione in f_next_state: prima i globali, poi split/merge, poi spostamenti, poi istruzioni soft.
 FeedbackDelta = Union[
     GlobalFeedback,
     SplitFeedback,

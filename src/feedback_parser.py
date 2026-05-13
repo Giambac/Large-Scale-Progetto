@@ -1,11 +1,19 @@
 """
-feedback_parser.py — parse_feedback(): the only module in Phase 2 that calls the LLM for parsing (D-05).
+feedback_parser.py — Traduce il testo dell'oracle in oggetti feedback strutturati.
 
-Converts raw oracle utterance text into a list of structured FeedbackDelta objects.
-Post-parse validation asserts every cluster_id in every delta against the current
-ClusteringState — hallucinated cluster IDs crash immediately with AssertionError (T-02-02).
-Unknown feedback types crash immediately with AssertionError (T-02-03).
-json.JSONDecodeError propagates (T-02-04 — accepted: fail loudly).
+Questo file risolve un problema pratico: l'oracle scrive testo libero in linguaggio naturale, ma il sistema ha bisogno di oggetti Python precisi per sapere cosa fare.
+
+Il flusso è semplice:
+    1. Arriva il testo dell'oracle
+    2. Viene mandato a Claude con un prompt che dice "trova i feedback in questo testo e restituiscili come array JSON"
+    3. Claude risponde con un array JSON
+    4. Il parser costruisce i dataclass corrispondenti
+    5. Ogni cluster_id nella risposta viene verificato — se non esiste nello stato corrente, il programma crasha immediatamente
+
+Tre cose fanno crashare il parser subito:
+    - Un tipo di feedback sconosciuto nella risposta dell'LLM
+    - Un cluster_id che non esiste nello stato corrente (allucinazione dell'LLM)
+    - Un merge di un cluster con se stesso
 """
 from __future__ import annotations
 
@@ -21,8 +29,11 @@ from src.feedback import (
     InstructionalFeedback,
 )
 
+# I cinque tipi validi che l'LLM può restituire
 VALID_FEEDBACK_TYPES = frozenset({"global", "split", "merge", "move_item", "instructional"})
 
+# Il prompt mandato a Claude per parsare il feedback
+# {cluster_summary} e {raw_text} vengono sostituiti prima della chiamata
 _PARSE_FEEDBACK_PROMPT = """
 You are parsing oracle feedback in a clustering conversation.
 Current clusters: {cluster_summary}
@@ -43,28 +54,27 @@ Rules:
 - cluster_id values must exist in the current cluster list.
 """
 
-
+"""
+def _build_cluster_summary( )
+    Costruisce una stringa compatta con tutti i cluster attivi.
+    Viene iniettata nel prompt per aiutare l'LLM a capire quali cluster esistono.
+    Esempio: "0: Alpha, 1: Beta, 2: Gamma"
+"""
 def _build_cluster_summary(state: ClusteringState) -> str:
-    """Return a compact string listing active cluster IDs and names.
-
-    Example: "0: Alpha, 1: Beta, 2: Gamma"
-    Pure function — no I/O.
-    """
     return ", ".join(f"{c.id}: {c.name}" for c in state.clusters)
 
+"""
+def _build_delta( )
+    Trasforma un singolo elemento JSON in un oggetto FeedbackDelta.
 
+    Tre guardie di sicurezza:
+        - Se il tipo non è uno dei cinque validi → crash immediato
+        - Se un cluster_id non esiste nello stato corrente → crash immediato (impedisce che un'allucinazione dell'LLM causi danni silenziosi)
+        - Se si tenta di fare merge di un cluster con se stesso → crash immediato
+
+    Se l'LLM omette un campo obbligatorio, la KeyError si propaga — non viene intercettata. Il sistema fallisce rumorosamente invece che in silenzio.
+"""
 def _build_delta(item: dict, valid_cluster_ids: set[int]) -> FeedbackDelta:
-    """Map one parsed JSON item to a FeedbackDelta.
-
-    Asserts:
-    - item["type"] is in VALID_FEEDBACK_TYPES
-    - All referenced cluster_ids exist in valid_cluster_ids
-    - merge cluster_a_id != cluster_b_id (self-merge guard)
-
-    Raises:
-        AssertionError: unknown type, hallucinated cluster_id, or self-merge
-        KeyError: LLM omitted a required field — fail loudly, do not catch
-    """
     assert "type" in item and item["type"] in VALID_FEEDBACK_TYPES, (
         f"parse_feedback: unknown feedback type in LLM response: {item}"
     )
@@ -107,32 +117,28 @@ def _build_delta(item: dict, valid_cluster_ids: set[int]) -> FeedbackDelta:
             target_cluster_id=item["target_cluster_id"],
         )
 
-    # feedback_type == "instructional" (only remaining valid type)
+    # L'unico tipo rimasto valido è "instructional"
     return InstructionalFeedback(instruction_text=item["instruction_text"])
 
+"""
+    Converte il testo grezzo dell'oracle in una lista di oggetti FeedbackDelta.
 
+    Flusso:
+        1. Se raw_text è vuoto, restituisce [] senza chiamare l'LLM.
+        2. Costruisce il riassunto dei cluster correnti e lo inietta nel prompt.
+        3. Chiama Claude con il prompt.
+        4. Pulisce la risposta rimuovendo eventuali backtick markdown.
+        5. Fa il parse del JSON.
+        6. Per ogni elemento dell'array chiama _build_delta.
+
+    L'unico try/except di tutto il file è attorno a json.loads — se l'LLM restituisce JSON malformato il programma crasha con un errore chiaro.
+    Tutto il resto fallisce rumorosamente senza essere intercettato.
+"""
 def parse_feedback(
     raw_text: str,
     state: ClusteringState,
     client: object,
 ) -> list[FeedbackDelta]:
-    """Convert raw oracle utterance into structured FeedbackDelta objects.
-
-    Fast path: empty raw_text returns [] without calling the LLM.
-
-    Args:
-        raw_text: Raw oracle utterance string.
-        state:    Current ClusteringState — used to validate cluster IDs.
-        client:   Anthropic-compatible client (client.messages.create).
-
-    Returns:
-        List of FeedbackDelta objects (may be empty).
-
-    Raises:
-        AssertionError: LLM returned unknown type or hallucinated cluster_id.
-        json.JSONDecodeError: LLM returned non-JSON text (fail loudly — propagates).
-        KeyError: LLM omitted a required field in a delta item (fail loudly).
-    """
     if not raw_text:
         return []
 
@@ -142,6 +148,7 @@ def parse_feedback(
         raw_text=raw_text,
     )
 
+    # Chiama Claude Haiku per parsare il feedback
     response = client.messages.create(
         model="claude-haiku-4-5",
         max_tokens=512,
@@ -149,13 +156,14 @@ def parse_feedback(
     )
 
     cleaned_text = response.content[0].text.strip()
-    # Strip markdown code fences (same pattern as cluster_naming.py)
+    # Rimuove i backtick markdown se l'LLM li ha aggiunti (es. ```json ... ```)
     if cleaned_text.startswith("```"):
         cleaned_text = cleaned_text.split("```")[1]
         if cleaned_text.startswith("json"):
             cleaned_text = cleaned_text[4:]
         cleaned_text = cleaned_text.strip()
 
+    # Parsa il JSON — se l'LLM ha restituito testo non valido crasha qui
     raw_items = json.loads(cleaned_text)
 
     assert isinstance(raw_items, list), (
@@ -164,4 +172,5 @@ def parse_feedback(
 
     valid_cluster_ids = {c.id for c in state.clusters}
 
+    # Costruisce un FeedbackDelta per ogni elemento dell'array
     return [_build_delta(item, valid_cluster_ids) for item in raw_items]

@@ -1,21 +1,15 @@
 """
-stopping.py — Stopping criteria specification (PRE-02).
+stopping.py — Quando si ferma la conversazione.
 
-Three OR-combined conditions. Any one firing stops the conversation loop.
-Priority order: oracle_satisfied > turn_budget > diminishing_returns.
+Tre condizioni che possono mettere fine al loop conversazionale. Basta che una sola si verifichi per fermare tutto.
 
-D-08: Oracle satisfaction — primary: OracleReply.satisfied=True token.
-      Secondary fallback: magnitude drops below epsilon for N turns (Phase 4).
-D-09: Turn budget — hard cap of 15 turns. Fires when turn_index >= 15.
-D-10: Diminishing returns — weighted feedback magnitude near zero for N turns.
-      Weighting scheme: global > cluster-level > point-level > instructional.
-      Exact weights and threshold are Phase 4 decisions; Phase 1 specifies structure only.
+Le tre condizioni, in ordine di priorità:
+  1. Oracle soddisfatto — l'oracle dice esplicitamente che va bene così.
 
-Phase 4 (Judge Agent) will:
-  1. Set FeedbackMagnitudeWeights fields to real float values.
-  2. Set StoppingCriteria.magnitude_threshold_epsilon to a real float.
-  3. Set StoppingCriteria.magnitude_fallback_turns to a real int.
-  4. Implement the diminishing-returns branch in check_stopping().
+  2. Budget turni — se si arriva al turno 15 senza che nessuno sia soddisfatto, il sistema si ferma comunque. 
+
+  3. Rendimenti decrescenti — se il feedback dell'oracle diventa sempre più piccolo (piccoli aggiustamenti invece di grandi cambiamenti), 
+                              il sistema capisce che si sta convergendo e si ferma. 
 """
 from __future__ import annotations
 
@@ -24,92 +18,87 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-
+"""
 class StopReason(Enum):
-    """The reason the conversation loop stopped. Exactly three values (D-08, D-09, D-10)."""
+
+    Il motivo per cui la conversazione si è fermata. Tre valori possibili.
+
+    Viene restituito da check_stopping() quando una condizione scatta.
+    Se nessuna condizione scatta, check_stopping() restituisce None.
+"""
+class StopReason(Enum):
     ORACLE_SATISFIED = "oracle_satisfied"
     TURN_BUDGET = "turn_budget"
     DIMINISHING_RETURNS = "diminishing_returns"
 
+"""
+class StoppingCriteria:
+   
+    I parametri di configurazione delle tre condizioni di stop.
 
+    frozen=True : una volta creato l'oggetto non si può modificare.
+
+    turn_budget                     — numero massimo di turni (default 15). Quando urn_index raggiunge questo valore, il sistema si ferma comunque, indipendentemente da tutto.
+
+    magnitude_threshold_epsilon     — soglia per la condizione dei rendimenti decrescenti. (Phase 4)
+
+    magnitude_fallback_turns        — quanti turni consecutivi con feedback piccolo servono per attivare la condizione. (Phase 4)
+"""
 @dataclass(frozen=True)
 class StoppingCriteria:
-    """
-    Configuration for all three stopping conditions.
-
-    turn_budget: Hard cap — loop stops unconditionally at turn_index >= turn_budget.
-                 Default 15 (D-09). Do not change this value without updating tests.
-
-    magnitude_threshold_epsilon: Threshold for diminishing-returns condition (D-10).
-                                 Set to float("nan") until Phase 4 fills in the value.
-
-    magnitude_fallback_turns: Number of consecutive turns below epsilon to trigger
-                              diminishing returns (D-08 secondary fallback).
-                              Set to -1 until Phase 4 fills in the value.
-    """
     turn_budget: int = 15
     magnitude_threshold_epsilon: float = float("nan")   # Phase 4 placeholder
     magnitude_fallback_turns: int = -1                  # Phase 4 placeholder
 
+"""
+class FeedbackMagnitudeWeights:
+    I pesi per misurare quanto è "grande" un feedback.
 
+    Non tutti i feedback hanno lo stesso peso: un feedback globale come "troppi cluster" è più significativo di "sposta questa recensione".
+    Questi pesi riflettono quella differenza.
+
+    Tutti i valori sono float("nan") per ora — la Phase 4 li sostituirà con valori reali. La formula finale sarà:
+        magnitude = (
+            global_feedback   * numero_di_feedback_globali
+            + cluster_level   * numero_di_feedback_sui_cluster
+            + point_level     * numero_di_feedback_sui_singoli_item
+            + instructional   * numero_di_feedback_istruzionali
+        )
+"""
 @dataclass
 class FeedbackMagnitudeWeights:
-    """
-    Weighting scheme for feedback magnitude computation (D-10).
-
-    Ordering: global_feedback > cluster_level > point_level > instructional.
-    Exact float values are Phase 4 decisions; all fields are nan until then.
-
-    Phase 4 must replace nan with real positive floats.
-    The weighted magnitude formula:
-        magnitude = (
-            w.global_feedback * count_global
-            + w.cluster_level * count_cluster
-            + w.point_level * count_point
-            + w.instructional * count_instructional
-        )
-    """
     global_feedback: float = float("nan")   # Phase 4 — highest weight
     cluster_level: float = float("nan")      # Phase 4
     point_level: float = float("nan")        # Phase 4
     instructional: float = float("nan")      # Phase 4 — lowest weight
 
+"""
+def check_stopping( )
+    Controlla le tre condizioni di stop e restituisce la prima che scatta.
 
+    Viene chiamata alla fine di ogni turno del loop conversazionale.
+    Se nessuna condizione scatta, restituisce None e il loop continua.
+
+    Parametri:
+        turn_index              — numero del turno corrente.
+        oracle_satisfied        — True se l'oracle ha detto che è soddisfatto.
+        recent_magnitudes       — lista delle magnitude dei feedback degli ultimi turni, usata dalla condizione dei rendimenti decrescenti.
+        criteria                — oggetto con i parametri di configurazione.
+"""
 def check_stopping(
     turn_index: int,
     oracle_satisfied: bool,
     recent_magnitudes: list[float],
     criteria: StoppingCriteria,
 ) -> Optional[StopReason]:
-    """
-    Evaluate all stopping conditions. Returns the first triggered condition, or None.
-
-    Args:
-        turn_index: 0-based index of the current turn.
-        oracle_satisfied: True if the oracle emitted an explicit satisfaction token.
-        recent_magnitudes: Sequence of feedback magnitude values for recent turns.
-                           Used by the diminishing-returns condition (stub in Phase 1).
-        criteria: StoppingCriteria configuration instance.
-
-    Returns:
-        StopReason if a condition fires, else None (loop should continue).
-
-    Condition priority (OR-combined, first wins):
-        1. oracle_satisfied (D-08 primary)
-        2. turn_index >= turn_budget (D-09)
-        3. diminishing returns (D-10) — stub; Phase 4 implements threshold check
-    """
-    # D-08: primary oracle satisfaction token
+    # Condizione 1: l'oracle è soddisfatto — ci si ferma subito. (D-08)
     if oracle_satisfied:
         return StopReason.ORACLE_SATISFIED
 
-    # D-09: hard turn budget — unconditional
+    # Condizione 2: raggiunto il numero massimo di turni — ci si ferma comunque. (D-09)
     if turn_index >= criteria.turn_budget:
         return StopReason.TURN_BUDGET
 
-    # D-10: diminishing returns — stub until Phase 4 sets epsilon and N.
-    # Do NOT implement the threshold comparison here.
-    # Phase 4 will add: if all(m < criteria.magnitude_threshold_epsilon for m in recent_N):
-    #                       return StopReason.DIMINISHING_RETURNS
+    # Condizione 3: rendimenti decrescenti — non ancora implementata. (D-10) (Phase 4)
 
     return None
