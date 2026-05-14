@@ -42,7 +42,7 @@ class HierarchyStore:
       - register: aggiunge un nuovo cluster al registro.
       - record_split: registra che un cluster è stato diviso in due.
       - record_merge: registra che due cluster sono stati uniti in uno.
-    """
+"""
 @dataclass
 class HierarchyStore:
     nodes: dict[int, ClusterNode] = field(default_factory=dict)
