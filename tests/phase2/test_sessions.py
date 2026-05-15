@@ -4,22 +4,18 @@ import json
 import os
 import tempfile
 import pytest
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture
 def client():
-    """Flask test client with testing mode enabled.
-    PROPAGATE_EXCEPTIONS=False ensures AssertionError in view functions
-    becomes a 500 response rather than propagating to the test (fail-loudly
-    asserts in routes still crash the request but return a status code to test).
+    """FastAPI test client.
+    TestClient converts unhandled exceptions to 500 responses by default,
+    matching the fail-loudly assert behaviour expected by these tests.
     """
     from web.app import app
-    app.config["TESTING"] = True
-    app.config["PROPAGATE_EXCEPTIONS"] = False
-    with app.test_client() as c:
+    with TestClient(app) as c:
         yield c
-    # Restore default so other test fixtures are not affected
-    app.config["PROPAGATE_EXCEPTIONS"] = True
 
 
 @pytest.fixture
@@ -82,7 +78,7 @@ def test_write_session_state_deserializes_correctly(simple_state):
 def test_get_sessions_endpoint_returns_200(client):
     response = client.get("/sessions")
     assert response.status_code == 200
-    data = json.loads(response.data)
+    data = response.json()
     assert isinstance(data, list)
 
 
@@ -95,7 +91,7 @@ def test_get_sessions_discovers_session_directory(client, simple_state, monkeypa
         os.makedirs(session_dir, exist_ok=True)
         _write_session_state(simple_state, session_dir)
         response = client.get("/sessions")
-        data = json.loads(response.data)
+        data = response.json()
         assert len(data) >= 1
         assert any(s["session_id"] == "2026-05-08T14-32-00" for s in data)
 
@@ -109,7 +105,7 @@ def test_sessions_response_has_required_fields(client, simple_state, monkeypatch
         os.makedirs(session_dir, exist_ok=True)
         _write_session_state(simple_state, session_dir)
         response = client.get("/sessions")
-        data = json.loads(response.data)
+        data = response.json()
         session = data[0]
         assert "session_id" in session
         assert "timestamp" in session
@@ -134,7 +130,7 @@ def test_resume_endpoint_loads_valid_session(client, simple_state, monkeypatch):
         _write_session_state(simple_state, session_dir)
         response = client.post("/resume/2026-05-08T14-32-00")
         assert response.status_code == 200
-        data = json.loads(response.data)
+        data = response.json()
         assert data["status"] == "resumed"
         assert data["turn_index"] == 3
 
