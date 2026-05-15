@@ -6,7 +6,7 @@
 1. Does conversational refinement converge toward oracle-accepted clusterings, and how fast (turns, cognitive load)?
 2. Do LLM-simulated oracles converge in patterns comparable to human oracles, or systematically differ?
 **Deadline:** early June 2026
-**Updated:** 2026-05-08
+**Updated:** 2026-05-15
 
 ---
 
@@ -99,6 +99,8 @@
 3. Cognitive load score visibly affects reply quality above threshold
 4. Instructional feedback parsed into structured constraints applied on the next turn
 5. Contradictions detected and logged to drift_history with reference to the conflicting prior turn
+
+**Web stack migration (2026-05-15):** Flask + Flask-SocketIO replaced by FastAPI + python-socketio (ASGI). UI-01 and UI-02 requirement wording unchanged; only the underlying framework switched. See `.planning/fastAPI_plan.md`.
 
 ---
 

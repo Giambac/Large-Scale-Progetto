@@ -153,4 +153,4 @@ These requirements activate when the team grows to 3–4 people or v1 is complet
 
 ---
 *Requirements defined: 2026-04-29*
-*Last updated: 2026-05-04 — added UI-02 (dataset upload via web UI)*
+*Last updated: 2026-05-15 — web stack migrated to FastAPI (UI-01/UI-02 wording unchanged)*

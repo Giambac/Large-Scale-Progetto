@@ -41,6 +41,21 @@ Three core agents:
 
 A crash during development is a feature. It tells you exactly what broke and where. Silent wrong answers are the actual failure mode to avoid.
 
+## Web Stack
+
+Debug UI runs on **FastAPI + uvicorn + python-socketio (ASGI)**.
+
+**Run:** `uvicorn web.app:asgi_app --host 0.0.0.0 --port 5000 --reload`
+
+**Deps:** `fastapi`, `uvicorn[standard]`, `python-socketio`, `python-multipart` (see `requirements.txt`)
+
+**NEVER install or import `eventlet` or `gevent`.** They monkey-patch the
+stdlib at import time (threading, socket, time.sleep), which corrupts
+numpy/sklearn/HDBSCAN/UMAP internal locking. uvicorn is native asyncio
+and needs no monkey-patching. CPU-bound work runs in `threading.Thread`;
+emits cross from worker threads to the event loop via
+`asyncio.run_coroutine_threadsafe` (see `SocketIOEmitter` in `web/app.py`).
+
 ## Planning Artifacts
 
 ```
