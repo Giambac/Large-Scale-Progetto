@@ -12,6 +12,7 @@ CRITICAL FACTS (from research):
 from __future__ import annotations
 
 import datetime
+import time
 import math
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -82,11 +83,13 @@ class HDBSCANBackend:
         Fit HDBSCAN and return (labels, soft_probs).
         Noise labels (-1) are resolved to the nearest cluster via argmax(soft_probs).
         """
+        t0 = time.perf_counter()                          # ← aggiungi
         labels, soft_probs = run_hdbscan(
             embeddings,
             min_cluster_size=self._min_cluster_size,
             min_samples=self._min_samples,
         )
+        print(f"[timing] run_hdbscan: {time.perf_counter() - t0:.2f}s")
         # Resolve noise points so labels has no -1 values
         assignments = assign_noise_to_nearest(labels, soft_probs)
         resolved_labels = np.array(
@@ -383,10 +386,11 @@ def build_initial_clustering_state(
     clusters = []
     for cluster_id in sorted(cluster_items.keys()):
         item_ids = cluster_items[cluster_id]
-        # Sample up to 5 representative texts for naming
         sample_ids = item_ids[:5]
         sample_texts = [id_to_text[i] for i in sample_ids]
+        t0 = time.perf_counter()
         naming_result = namer.name_cluster(sample_texts, cluster_id)
+        print(f"[timing] namer.name_cluster (cluster {cluster_id}): {time.perf_counter() - t0:.2f}s")
         clusters.append(Cluster(
             id=cluster_id,
             name=naming_result["name"],

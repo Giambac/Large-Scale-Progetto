@@ -10,6 +10,7 @@ import os
 import shutil
 import sys
 import threading
+import time
 
 # Ensure the project root is on sys.path so `src` is importable regardless
 # of which directory the server is launched from.
@@ -56,7 +57,6 @@ def _write_session_state(state: "ClusteringState", session_dir: str) -> None:
 
 
 # ── UMAP projection helpers (VIZ-V2-01) ──────────────────────────────────────
-
 def _compute_projection(embeddings: "np.ndarray") -> "np.ndarray":
     """
     Compute 2D UMAP projection of embeddings (D-21).
@@ -70,14 +70,20 @@ def _compute_projection(embeddings: "np.ndarray") -> "np.ndarray":
     Returns:
         coords: shape (N, 2) float32
     """
+    import time
     import numpy as np
     import umap as umap_lib
     from sklearn.decomposition import PCA
 
-    # PCA pre-reduction: 768 → 50 dims before UMAP (~10x faster with minimal quality loss)
+    N, dim = embeddings.shape
+    print(f"[timing] _compute_projection: input shape ({N}, {dim})")
+
+    t0 = time.perf_counter()
     pca = PCA(n_components=50, random_state=42)
     reduced = pca.fit_transform(embeddings)
+    print(f"[timing] PCA {dim}→50: {time.perf_counter() - t0:.2f}s")
 
+    t0 = time.perf_counter()
     reducer = umap_lib.UMAP(
         n_components=2,
         n_neighbors=15,
@@ -86,11 +92,12 @@ def _compute_projection(embeddings: "np.ndarray") -> "np.ndarray":
         verbose=False,
     )
     coords = reducer.fit_transform(reduced)
+    print(f"[timing] UMAP 50→2 ({N} items): {time.perf_counter() - t0:.2f}s")
+
     assert coords.shape == (embeddings.shape[0], 2), (
         f"UMAP output shape {coords.shape} != ({embeddings.shape[0]}, 2)"
     )
     return coords.astype("float32")
-
 
 # Palette of 20 visually distinct hex colors for cluster membership.
 # Cycles if there are more than 20 clusters.
@@ -416,7 +423,7 @@ def _run_conversation_background(records: list[dict], log_path: str) -> None:
         import anthropic
         namer = AnthropicClusterNamer(anthropic.Anthropic(api_key=api_key))
     elif provider == "openai":
-        namer = OpenAIClusterNamer(api_key=api_key)
+        namer = OpenAIClusterNamer(api_key=api_key, model="llama-3.1-8b-instant")
     else:
         assert provider == "google"
         namer = GoogleClusterNamer(api_key=api_key)
@@ -458,9 +465,11 @@ def _run_conversation_background(records: list[dict], log_path: str) -> None:
     else:
         assert False, f"Unknown backend: {_backend_name!r}"
 
+    t0 = time.perf_counter()
     initial_state = build_initial_clustering_state(
         store.get_all(), records, namer, backend=backend
     )
+    print(f"[timing] build_initial_clustering_state: {time.perf_counter() - t0:.2f}s")
     _session["state"] = initial_state
 
     # D-17: log chosen K to session-scoped audit_log.jsonl as backend_init event so runs are reproducible
@@ -580,4 +589,4 @@ async def connect(sid, environ):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("web.app:asgi_app", host="0.0.0.0", port=5000, reload=False)
+    uvicorn.run("web.app:asgi_app", host="0.0.0.0", port=5001, reload=False)
