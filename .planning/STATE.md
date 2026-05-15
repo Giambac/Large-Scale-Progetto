@@ -6,7 +6,7 @@ current_phase: 4 — Judge Agent
 current_plan: Phase 3 complete — ready to plan Phase 4
 status: complete
 stopped_at: Phase 3 verified (5/5 must-haves) — advancing to Phase 4
-last_updated: "2026-05-12T14:00:00.000Z"
+last_updated: "2026-05-15T00:00:00.000Z"
 progress:
   total_phases: 6
   completed_phases: 3
@@ -16,7 +16,7 @@ progress:
 
 # Project State: Conversational Clustering
 
-**Last updated:** 2026-05-12
+**Last updated:** 2026-05-15
 **Updated by:** execute-phase 03 complete — verification passed 5/5, advancing to Phase 4
 
 ---
@@ -91,6 +91,7 @@ Phase 6 [          ]   0% Generalization and Human Validation
 - Inject only a structured state summary (under 500 tokens) into context window, not full history
 - Test state integrity at turn 20, 30, 50 with synthetic oracle before any human study
 - Sessions persist in sessions/<timestamp>/ directories; server restart does not lose state
+- Web layer is FastAPI + uvicorn + python-socketio (ASGI). Migrated from Flask + Flask-SocketIO on 2026-05-15. CPU-bound clustering work runs in worker threads; SocketIOEmitter bridges thread→loop via run_coroutine_threadsafe. eventlet and gevent are explicitly forbidden (would corrupt numpy/sklearn).
 
 ### Research Flags by Phase
 
