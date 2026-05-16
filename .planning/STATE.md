@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 4 — Judge Agent
-current_plan: Phase 3 complete — ready to plan Phase 4
-status: complete
-stopped_at: Phase 3 verified (5/5 must-haves) — advancing to Phase 4
-last_updated: "2026-05-15T00:00:00.000Z"
+current_plan: Phase 4 context gathered — ready to plan
+status: context_ready
+stopped_at: Phase 4 CONTEXT.md written (33 decisions across 9 areas, recipe-aligned)
+last_updated: "2026-05-16T01:30:00.000Z"
 progress:
   total_phases: 6
   completed_phases: 3
@@ -119,10 +119,14 @@ None.
 
 ## Session Continuity
 
-**Last session:** 2026-05-12
-**Stopped at:** Phase 3 UAT complete (9/10 pass, 1 minor pre-existing bug fixed). Ready to plan Phase 4.
+**Last session:** 2026-05-16
+**Stopped at:** Phase 4 CONTEXT.md written. 33 decisions across 9 areas including the wazzup-recipe-aligned DB layer shape (SQLite + raw SQL + src/db/ as sole SQL layer + Pydantic triples + recipe §6 error conventions), JUDG-01 stopping-criteria numbers (geometric weights 1.0/0.5/0.2/0.1, ε=0.05, N_fallback=3, all tunable via YAML config), JUDG-02 pairwise validation (accumulated oracle feedback as truth, overwrite on contradiction, N=min(50, bag_size)), JUDG-03 no-dialogue baseline (oracle runs once, strategy_id='no_dialogue', paired by (dataset, persona, seed)), WR-04 cleanup bundled in, docs/MODEL.md spec-first, CI deferred.
 
-**To resume:** Run `/gsd-plan-phase 4` to plan Phase 4 (Judge Agent).
+**Prior session:** 2026-05-12 — Phase 3 UAT complete (9/10 pass, 1 minor pre-existing bug fixed). Ready to plan Phase 4.
+
+**To resume:** Run `/clear` then `/gsd-plan-phase 4`.
+
+**New canonical reference for Phase 4:** wazzup "how to build simple applications" recipe (user-provided this session). Planner should ask user to commit the recipe markdown somewhere stable (e.g. `private/recipes/`) before execute begins — the recipe is the source of design discipline for the DB layer shape and docs discipline.
 
 **Existing repo artifacts:**
 
