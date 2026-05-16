@@ -159,3 +159,29 @@ def oracle_agent_factory():
         mock_client.messages.create.return_value = mock_response
         return OracleAgent(spec=spec, noise_params=noise, client=mock_client)
     return _factory
+
+
+# ──────────────────────────────────────────
+# Phase 4 fixtures
+# ──────────────────────────────────────────
+
+import sqlite3
+
+from src.db.connection import init_schema
+
+
+@pytest.fixture
+def db():
+    """
+    In-memory SQLite connection for DB layer tests (recipe §9, D-01).
+
+    Production code never knows which connection it received — this fixture
+    provides the same interface as connect() but uses ':memory:' so tests
+    are isolated and leave no files on disk.
+    """
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    init_schema(conn)
+    yield conn
+    conn.close()
