@@ -1,0 +1,54 @@
+# experiments/configs/harness.yaml
+# Phase 5 ablation harness configuration (ALAB-02, D-09).
+# Defines the N×M×K cross-product of strategies × personas × seeds.
+# Carries forward stopping: and judge: sections from default.yaml so a single
+# config drives both run_harness (interactive) and run_baseline (paired).
+
+harness:
+  strategies: [random, uncertainty_driven, boundary_driven]
+  personas:   [curious, skeptical, drifty]
+  seeds:      [1, 2, 3]
+  exclude: []          # optional: list of {strategy: str, persona: str, seed: int} to drop
+  max_workers: 4       # ThreadPoolExecutor concurrency cap (respects LLM rate limits)
+  dataset: dataset/train.jsonl   # required by run_conversation + run_baseline
+  log_dir: sessions    # where per-run JSONL audit_log files land (one subdir per combo)
+
+personas:
+  curious:
+    preferred_k: 5
+    semantic_axes: [topic, sentiment]
+    persona_description: "A curious researcher who explores ideas patiently and rarely contradicts earlier feedback."
+    noise:
+      consistency_rate: 0.9
+      drift_probability: 0.05
+      sycophancy_resistance: 0.7
+
+  skeptical:
+    preferred_k: 7
+    semantic_axes: [topic, source_quality]
+    persona_description: "A skeptical reviewer who pushes back on weak groupings and resists agreement under pressure."
+    noise:
+      consistency_rate: 0.75
+      drift_probability: 0.05
+      sycophancy_resistance: 0.9
+
+  drifty:
+    preferred_k: 4
+    semantic_axes: [tone]
+    persona_description: "A drifty thinker who frequently changes their preferred grouping as new items come into view."
+    noise:
+      consistency_rate: 0.7
+      drift_probability: 0.25
+      sycophancy_resistance: 0.5
+
+stopping:
+  epsilon: 0.05
+  n_fallback: 3
+  weights:
+    global: 1.0
+    cluster: 0.5
+    point: 0.2
+    instructional: 0.1
+
+judge:
+  pairwise_sample_size: 50
