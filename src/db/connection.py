@@ -54,6 +54,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
             persona_id          TEXT    NOT NULL,
             seed                INTEGER NOT NULL,
             dataset             TEXT    NOT NULL,
+            oracle_type         TEXT    NOT NULL DEFAULT 'llm',
             total_turns         INTEGER,
             convergence_reason  TEXT,
             start_timestamp     TEXT    NOT NULL,
@@ -66,6 +67,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_experiments_strategy
             ON experiments(strategy_id, persona_id, dataset);
+
+        CREATE INDEX IF NOT EXISTS idx_experiments_oracle_type
+            ON experiments(oracle_type);
 
         CREATE TABLE IF NOT EXISTS turns (
             id                  INTEGER PRIMARY KEY,
