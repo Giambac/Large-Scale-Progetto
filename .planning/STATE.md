@@ -3,22 +3,22 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 5 — Ablation Harness and Strategies
-current_plan: 05-03 complete — UncertaintyDrivenStrategy + BoundaryDrivenStrategy
+current_plan: 05-04 complete — N×M×K ablation harness + baseline dedup + cached embeddings
 status: executing
-stopped_at: 05-03-PLAN.md complete. Next: 05-04 (ablation harness).
-last_updated: "2026-05-17T00:15:00.000Z"
+stopped_at: "05-04-PLAN.md complete. Next: 05-05 (analysis/CI layer)."
+last_updated: "2026-05-17T00:00:00.000Z"
 progress:
-  total_phases: 6
-  completed_phases: 4
-  total_plans: 16
-  completed_plans: 12
-  percent: 75
+  total_phases: 3
+  completed_phases: 1
+  total_plans: 11
+  completed_plans: 11
+  percent: 40
 ---
 
 # Project State: Conversational Clustering
 
 **Last updated:** 2026-05-17
-**Updated by:** 05-03-PLAN.md complete — UncertaintyDrivenStrategy + BoundaryDrivenStrategy added to src/strategy.py (ALAB-01)
+**Updated by:** 05-04-PLAN.md complete — N×M×K ablation harness (ALAB-02) with real OracleAgent, baseline dedup (W-01), cached embedding store (W-04)
 
 ---
 
@@ -34,7 +34,7 @@ progress:
 
 **Milestone:** v1
 **Current phase:** 5 — Ablation Harness and Strategies
-**Current plan:** 05-03 complete — UncertaintyDrivenStrategy + BoundaryDrivenStrategy
+**Current plan:** 05-04 complete — N×M×K ablation harness + baseline dedup + cached embeddings
 **Status:** Executing
 
 **Progress:**
@@ -44,7 +44,7 @@ Phase 1 [##########] 100% Pre-Code Obligations and Foundation ✓
 Phase 2 [##########] 100% Clustering Agent Core (v1 ✓, BACK-V2-01 ✓, VIZ-V2-01 ✓, UI-V2-01 ✓)
 Phase 3 [##########] 100% Oracle Agent (ORC-01 ✓, ORC-02 ✓, ORC-03 ✓, ORC-04 ✓, FB-04 ✓)
 Phase 4 [##########] 100% Judge Agent (DB layer ✓, f_eval ✓, PairBag ✓, run_baseline ✓, UI panels ✓)
-Phase 5 [███       ]  60% Ablation Harness and Strategies (05-01 ✓, 05-02 ✓, 05-03 ✓)
+Phase 5 [████      ]  80% Ablation Harness and Strategies (05-01 ✓, 05-02 ✓, 05-03 ✓, 05-04 ✓)
 Phase 6 [          ]   0% Generalization and Human Validation
 
 ```
@@ -123,8 +123,8 @@ None.
 
 ## Session Continuity
 
-**Last session:** 2026-05-17T00:15:00Z
-**Stopped at:** 05-03-PLAN.md complete. Next: 05-04 (ablation harness).
+**Last session:** 2026-05-17T00:30:00Z
+**Stopped at:** 05-04-PLAN.md complete. Next: 05-05 (analysis/CI layer).
 
 **Prior session:** 2026-05-16 — Phase 4 CONTEXT.md written (33 decisions, wazzup recipe aligned).
 
