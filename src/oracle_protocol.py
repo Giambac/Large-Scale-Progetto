@@ -8,6 +8,9 @@ structural subtyping via isinstance check works because OracleProtocol is @runti
 Phase 3 OracleReply extension: OracleReply gains contradiction_detected and contradicted_turn
 fields for drift detection (ORC-04). Both fields have defaults so existing MockOracle callers
 require no changes.
+
+Phase 4 (D-27 / WR-04): reply() gains global_instructions and cognitive_load params so
+isinstance branch in conversation_loop.py can be removed.
 """
 from __future__ import annotations
 
@@ -44,7 +47,13 @@ class OracleProtocol(Protocol):
 
     Structural subtyping: implementations do NOT need to inherit from this class.
     """
-    def reply(self, state: ClusteringState, message: str) -> OracleReply:
+    def reply(
+        self,
+        state: ClusteringState,
+        message: str,
+        global_instructions: list[str] | None = None,
+        cognitive_load: float | None = None,
+    ) -> OracleReply:
         ...
 
 
@@ -62,8 +71,15 @@ class MockOracle:
         self._script = script
         self._turn = 0
 
-    def reply(self, state: ClusteringState, message: str) -> OracleReply:
-        """Return the next scripted reply, or neutral default after script is exhausted."""
+    def reply(
+        self,
+        state: ClusteringState,
+        message: str,
+        global_instructions: list[str] | None = None,
+        cognitive_load: float | None = None,
+    ) -> OracleReply:
+        """Return the next scripted reply, or neutral default after script is exhausted.
+        global_instructions and cognitive_load accepted but ignored — MockOracle is scripted."""
         if self._turn < len(self._script):
             r = self._script[self._turn]
         else:

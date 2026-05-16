@@ -1,0 +1,16 @@
+# experiments/configs/default.yaml
+# Default experiment configuration.
+# All values here match the hardcoded defaults in src/stopping.py (D-13/14/15)
+# and src/judge.py (D-19). Override per-experiment by passing --config to run_baseline.py.
+
+stopping:
+  epsilon: 0.05          # magnitude_threshold_epsilon (D-14)
+  n_fallback: 3          # magnitude_fallback_turns (D-15)
+  weights:
+    global: 1.0          # GlobalFeedback weight (D-13)
+    cluster: 0.5         # SplitFeedback / MergeFeedback weight (D-13)
+    point: 0.2           # MoveItemFeedback weight (D-13)
+    instructional: 0.1   # InstructionalFeedback weight (D-13)
+
+judge:
+  pairwise_sample_size: 50  # max pairs sampled per turn (D-19)

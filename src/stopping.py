@@ -11,11 +11,12 @@ D-10: Diminishing returns — weighted feedback magnitude near zero for N turns.
       Weighting scheme: global > cluster-level > point-level > instructional.
       Exact weights and threshold are Phase 4 decisions; Phase 1 specifies structure only.
 
-Phase 4 (Judge Agent) will:
-  1. Set FeedbackMagnitudeWeights fields to real float values.
-  2. Set StoppingCriteria.magnitude_threshold_epsilon to a real float.
-  3. Set StoppingCriteria.magnitude_fallback_turns to a real int.
-  4. Implement the diminishing-returns branch in check_stopping().
+Phase 4 implemented:
+  1. FeedbackMagnitudeWeights fields set to real float values (D-13).
+  2. StoppingCriteria.magnitude_threshold_epsilon = 0.05 (D-14).
+  3. StoppingCriteria.magnitude_fallback_turns = 3 (D-15).
+  4. Diminishing-returns branch implemented in check_stopping() (D-10).
+  5. compute_magnitude() added for use by conversation_loop.py (Plan 04).
 """
 from __future__ import annotations
 
@@ -48,8 +49,8 @@ class StoppingCriteria:
                               Set to -1 until Phase 4 fills in the value.
     """
     turn_budget: int = 15
-    magnitude_threshold_epsilon: float = float("nan")   # Phase 4 placeholder
-    magnitude_fallback_turns: int = -1                  # Phase 4 placeholder
+    magnitude_threshold_epsilon: float = 0.05   # D-14
+    magnitude_fallback_turns: int = 3            # D-15
 
 
 @dataclass
@@ -69,10 +70,10 @@ class FeedbackMagnitudeWeights:
             + w.instructional * count_instructional
         )
     """
-    global_feedback: float = float("nan")   # Phase 4 — highest weight
-    cluster_level: float = float("nan")      # Phase 4
-    point_level: float = float("nan")        # Phase 4
-    instructional: float = float("nan")      # Phase 4 — lowest weight
+    global_feedback: float = 1.0   # D-13 — highest weight
+    cluster_level: float = 0.5     # D-13
+    point_level: float = 0.2       # D-13
+    instructional: float = 0.1     # D-13 — lowest weight
 
 
 def check_stopping(
@@ -107,9 +108,39 @@ def check_stopping(
     if turn_index >= criteria.turn_budget:
         return StopReason.TURN_BUDGET
 
-    # D-10: diminishing returns — stub until Phase 4 sets epsilon and N.
-    # Do NOT implement the threshold comparison here.
-    # Phase 4 will add: if all(m < criteria.magnitude_threshold_epsilon for m in recent_N):
-    #                       return StopReason.DIMINISHING_RETURNS
+    # D-10: diminishing returns — check last N turns for epsilon silence
+    if criteria.magnitude_fallback_turns > 0 and len(recent_magnitudes) >= criteria.magnitude_fallback_turns:
+        last_n = recent_magnitudes[-criteria.magnitude_fallback_turns:]
+        if all(m < criteria.magnitude_threshold_epsilon for m in last_n):
+            return StopReason.DIMINISHING_RETURNS
 
     return None
+
+
+def compute_magnitude(deltas: list, weights: FeedbackMagnitudeWeights) -> float:
+    """
+    Compute weighted feedback magnitude from a list of FeedbackDelta objects.
+
+    Used by conversation_loop.py to populate recent_magnitudes for check_stopping().
+    Replaces the Phase 2 stub of float(len(deltas)) (conversation_loop.py line 247).
+
+    Args:
+        deltas: List of FeedbackDelta objects from parse_feedback().
+        weights: FeedbackMagnitudeWeights with non-nan float values.
+
+    Returns:
+        Scalar magnitude >= 0.0.
+    """
+    from src.feedback import GlobalFeedback, SplitFeedback, MergeFeedback, MoveItemFeedback, InstructionalFeedback
+    assert not math.isnan(weights.global_feedback), "FeedbackMagnitudeWeights must be filled in before calling compute_magnitude"
+    total = 0.0
+    for d in deltas:
+        if isinstance(d, GlobalFeedback):
+            total += weights.global_feedback
+        elif isinstance(d, (SplitFeedback, MergeFeedback)):
+            total += weights.cluster_level
+        elif isinstance(d, MoveItemFeedback):
+            total += weights.point_level
+        elif isinstance(d, InstructionalFeedback):
+            total += weights.instructional
+    return total
