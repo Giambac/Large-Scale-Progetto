@@ -89,6 +89,16 @@ header h1 { margin: 0; font-size: 1.1rem; }
 
 .placeholder { color: #999; font-size: 0.85rem; }
 
+#backend-select {
+    padding: 5px 8px;
+    border-radius: 4px;
+    border: 1px solid #555;
+    background: #333;
+    color: #eee;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
 /* Upload form */
 #upload-form { display: flex; gap: 8px; align-items: center; }
 #upload-form button {
