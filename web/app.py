@@ -353,7 +353,10 @@ async def resume_session(session_id: str):
             }
             for item_id, probs in state.soft_probs.items()
         },
-        "cognitive_load": 0.0,  # not available for resumed sessions
+        "cognitive_load": 0.0,       # not available for resumed sessions
+        "pairwise_accuracy": 0.0,    # D-28: not available for resumed sessions (PairBag reconstruction is Phase 5)
+        "convergence_signal": None,  # D-28
+        "contradiction_count": 0,    # D-28
     })
 
     return {
@@ -550,6 +553,30 @@ def _run_conversation_background(records: list[dict], log_path: str, backend_nam
     # Write initial state snapshot (D-27)
     _write_session_state(initial_state, session_dir)
 
+    # Phase 4: Open DB connection for this run (D-04)
+    # check_same_thread=False MANDATORY — this function runs in a background thread
+    from src.db.connection import connect as _db_connect, init_schema as _db_init_schema
+    from src.db.experiments import ExperimentCreate as _ExperimentCreate, create as _exp_create, update as _exp_update
+    from src.db.experiments import ExperimentUpdate as _ExperimentUpdate
+    from datetime import datetime as _dt, timezone as _tz
+
+    _db_conn = _db_connect()  # opens experiments.db at repo root
+    _db_init_schema(_db_conn)
+
+    # Create experiment row at run start
+    _exp_start_ts = _dt.now(_tz.utc).isoformat()
+    _exp_create_model = _ExperimentCreate(
+        name=f"interactive-{session_ts}",
+        strategy_id="interactive",  # D-08: distinct from "random"/"uncertainty_driven"/"boundary_driven" strategy IDs
+        persona_id="web_session",   # Phase 5 will replace with actual OracleSpec.persona_id
+        seed=0,                     # Phase 5 will replace with actual experiment seed
+        dataset=session_ts,         # session timestamp as dataset identifier until Phase 5 parameterizes
+        start_timestamp=_exp_start_ts,
+        details={},
+    )
+    _experiment = _exp_create(_db_conn, _exp_create_model)
+    _experiment_id = _experiment.id
+
     id_to_text = {i: r["text"] for i, r in enumerate(records)}
 
     # Emit initial projection (D-22: once after initial clustering)
@@ -582,9 +609,25 @@ def _run_conversation_background(records: list[dict], log_path: str, backend_nam
         id_to_text=id_to_text,
         llm_client=None,
         post_turn_callback=_per_turn_callback,
+        db_conn=_db_conn,              # Phase 4: DB writes per turn (D-04)
+        experiment_id=_experiment_id,  # Phase 4: FK for turn/feedback rows
+        # pair_bag=None intentionally — new session starts with empty bag.
+        # NOTE (D-21 / V-4-05): for RESUMED sessions, pair_bag must be reconstructed
+        # from audit_log.jsonl + events.jsonl before passing here. Reconstruction is
+        # Phase 5 scope. The deviation() call inside run_conversation() will flag resumed
+        # DB sessions that start without a bag (pairwise_accuracy will be 0.0 until new
+        # feedback arrives).
     )
     _session["state"] = final_state
     _write_session_state(final_state, session_dir)
+
+    # Phase 4: Seal experiment row with end-of-run summary (D-04)
+    _exp_update(_db_conn, _experiment_id, _ExperimentUpdate(
+        total_turns=final_state.turn_index,
+        end_timestamp=_dt.now(_tz.utc).isoformat(),
+        details={"turns_to_convergence": final_state.turn_index},
+    ))
+    _db_conn.close()
 
 
 # ── Upload parser helper ──────────────────────────────────────────────────────
@@ -668,6 +711,9 @@ async def connect(sid, environ):
                 for item_id, probs in state.soft_probs.items()
             },
             "cognitive_load": 0.0,
+            "pairwise_accuracy": 0.0,    # D-28: safe default for reconnect (no PairBag available here)
+            "convergence_signal": None,  # D-28
+            "contradiction_count": 0,    # D-28
         }, to=sid)
 
 @sio.event
