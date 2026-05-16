@@ -21,6 +21,7 @@ Full recipe shape — indexed columns + details JSON. One row per conversation r
 | `persona_id` | TEXT | NOT NULL | Oracle persona identifier (e.g. `trump`, `curie`) |
 | `seed` | INTEGER | NOT NULL | RNG seed for reproducible runs |
 | `dataset` | TEXT | NOT NULL | Dataset name used for this run |
+| `oracle_type` | TEXT | NOT NULL, DEFAULT `'llm'` | Source of oracle replies: `'llm'` (automated Phase 5 run via harness) or `'human'` (Phase 6 study session). Indexed for cross-run filtering (EXP-V2-01). |
 | `total_turns` | INTEGER | NULL until run ends | Number of conversation turns completed |
 | `convergence_reason` | TEXT | NULL until run ends | One of: `oracle_satisfied`, `turn_budget`, `diminishing_returns` |
 | `start_timestamp` | TEXT | NOT NULL | ISO-8601 UTC; when the conversation started |
@@ -122,6 +123,7 @@ CREATE UNIQUE INDEX experiment_slug_live ON experiments(slug) WHERE deleted_at I
 |---|---|---|---|---|
 | `experiment_slug_live` | experiments | `(slug)` | `WHERE deleted_at IS NULL` | Partial unique index for live slug uniqueness |
 | `idx_experiments_strategy` | experiments | `(strategy_id, persona_id, dataset)` | — | Phase 5 cross-run GROUP BY queries |
+| `idx_experiments_oracle_type` | experiments | `(oracle_type)` | — | Phase 6 LLM-vs-human comparison filtering (EXP-V2-01) |
 | `idx_turns_experiment` | turns | `(experiment_id, turn_index)` | — | Turn pagination and ordered replay |
 | `idx_oracle_feedback_turn` | oracle_feedback | `(turn_id)` | — | Feedback lookup by turn |
 
