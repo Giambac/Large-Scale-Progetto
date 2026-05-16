@@ -18,8 +18,8 @@ from pathlib import Path
 _ENV_PATH = Path(__file__).parent.parent / ".env"
 
 _PRIORITY: list[tuple[str, str]] = [
-    ("anthropic", "ANTHROPIC_API_KEY"),
     ("openai",    "OPENAI_API_KEY"),
+    ("anthropic", "ANTHROPIC_API_KEY"),
     ("google",    "GOOGLE_API_KEY"),
 ]
 

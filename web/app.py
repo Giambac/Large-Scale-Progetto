@@ -461,7 +461,7 @@ def _run_conversation_background(records: list[dict], log_path: str, backend_nam
         import anthropic
         namer = AnthropicClusterNamer(anthropic.Anthropic(api_key=api_key))
     elif provider == "openai":
-        namer = OpenAIClusterNamer(api_key=api_key, model="llama-3.1-8b-instant")
+        namer = OpenAIClusterNamer(api_key=api_key)
     else:
         assert provider == "google"
         namer = GoogleClusterNamer(api_key=api_key)
