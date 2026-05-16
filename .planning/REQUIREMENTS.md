@@ -62,7 +62,7 @@
 
 ### Ablation & Evaluation
 
-- [ ] **ALAB-01**: `f_next_best_step` exposes a swappable Strategy interface with at least 3 registered strategies: Random, UncertaintyDriven, BoundaryDriven (and optionally InformationGain)
+- [x] **ALAB-01**: `f_next_best_step` exposes a swappable Strategy interface with at least 3 registered strategies: Random, UncertaintyDriven, BoundaryDriven (and optionally InformationGain)
 - [ ] **ALAB-02**: Multi-run experiment harness executes N strategies × M personas × K seeds automatically, logging all runs to AuditLog with `strategy_id` and `persona_id`
 - [ ] **ALAB-03**: Bootstrap confidence intervals are computed on the headline quantitative claim (turns-to-convergence or information-gain-per-cognitive-load ratio)
 
@@ -140,7 +140,7 @@ These requirements activate when the team grows to 3–4 people or v1 is complet
 | JUDG-01 | Phase 4 | Complete |
 | JUDG-02 | Phase 4 | Pending |
 | JUDG-03 | Phase 4 | Pending |
-| ALAB-01 | Phase 5 | Pending |
+| ALAB-01 | Phase 5 | Complete |
 | ALAB-02 | Phase 5 | Pending |
 | ALAB-03 | Phase 5 | Pending |
 | GEN-01 | Phase 6 | Pending |

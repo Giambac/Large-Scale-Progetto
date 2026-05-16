@@ -159,10 +159,10 @@ Plans:
 4. oracle_type logged to separate LLM runs from human runs in downstream analysis
 
 
-**Plans:** 1/5 plans executed
+**Plans:** 2/5 plans executed
 Plans:
 - [x] 05-01-PLAN.md — DB schema: oracle_type column (EXP-V2-01)
-- [ ] 05-02-PLAN.md — _format_message enrichment for targeted payloads (ALAB-01 support)
+- [x] 05-02-PLAN.md — _format_message enrichment for targeted payloads (ALAB-01 support)
 - [ ] 05-03-PLAN.md — UncertaintyDrivenStrategy + BoundaryDrivenStrategy (ALAB-01)
 - [ ] 05-04-PLAN.md — N×M×K harness + STRATEGY_REGISTRY + harness.yaml (ALAB-02, EXP-V2-01)
 - [ ] 05-05-PLAN.md — Bootstrap CI: src/analysis.py + compute_ci.py + notebooks/analysis.ipynb (ALAB-03)
