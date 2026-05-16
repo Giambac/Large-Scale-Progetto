@@ -32,7 +32,7 @@ function renderSessionsList(sessions) {
         li.className = 'session-item';
         li.title = 'Click to resume session ' + s.session_id;
         li.innerHTML =
-            '<span class="session-ts">' + escapeHtml(s.timestamp) + '</span> ' +
+            '<span class="session-ts">' + escapeHtml(s.name || s.timestamp) + '</span> ' +
             '<span class="session-meta">' + s.cluster_count + ' clusters, turn ' + s.turn_count + '</span>';
         li.addEventListener('click', function () { resumeSession(s.session_id); });
         list.appendChild(li);
@@ -59,6 +59,7 @@ function resumeSession(sessionId) {
 socket.on('connect', function () {
     document.getElementById('status-banner').textContent = 'Status: Connected';
     loadSessionsList();  // UI-V2-01: refresh session list on (re)connect
+    socket.emit('request_progress');
 });
 
 socket.on('disconnect', function () {
@@ -89,6 +90,16 @@ socket.on('projection_update', function (data) {
     // max_probs: list of N floats (used for point opacity)
     // cluster_colors: { str(cluster_id): "#rrggbb" }
     drawProjection(data.coords, data.cluster_ids, data.max_probs, data.cluster_colors);
+});
+
+// ── Progress update during session initialisation ─────────────────
+socket.on('progress_update', function (data) {
+    console.log('progress_update received:', data);
+    const stages = { embeddings: 1, clustering: 2, umap: 3 };
+    const stageNum = stages[data.stage] || '?';
+    const pctStr = data.pct > 0 ? ' (' + data.pct + '%)' : '';
+    document.getElementById('cluster-cards').innerHTML =
+        '<p class="placeholder">[' + stageNum + '/3] ' + escapeHtml(data.msg) + pctStr + '</p>';
 });
 
 function drawProjection(coords, clusterIds, maxProbs, clusterColors) {
@@ -198,14 +209,13 @@ document.getElementById('upload-form').addEventListener('submit', function (e) {
     }
     const formData = new FormData();
     formData.append('file', fileInput.files[0]);
+    formData.append('backend', document.getElementById('backend-select').value);
     document.getElementById('status-banner').textContent = 'Status: Uploading...';
     fetch('/upload', { method: 'POST', body: formData })
         .then(function (r) { return r.json(); })
         .then(function (data) {
             document.getElementById('status-banner').textContent =
                 'Status: Session started — ' + data.records + ' records';
-            document.getElementById('cluster-cards').innerHTML =
-                '<p>Session running. Waiting for first turn update...</p>';
         })
         .catch(function (err) {
             document.getElementById('status-banner').textContent = 'Status: Upload failed — ' + err;
@@ -218,3 +228,4 @@ function escapeHtml(str) {
         .replace(/&/g, '&amp;').replace(/</g, '&lt;')
         .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+
