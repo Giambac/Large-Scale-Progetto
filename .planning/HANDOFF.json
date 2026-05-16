@@ -1,39 +1,82 @@
 {
   "version": "1.0",
-  "timestamp": "2026-05-16T21:59:28.492Z",
-  "phase": "5",
-  "phase_name": "Ablation Harness and Strategies",
+  "timestamp": "2026-05-16T22:34:32.859Z",
+  "phase": "05",
+  "phase_name": "ablation-harness-and-strategies",
   "phase_dir": ".planning/phases/05-ablation-harness-and-strategies",
-  "plan": 0,
-  "task": 0,
-  "total_tasks": 0,
+  "plan": null,
+  "task": null,
+  "total_tasks": 13,
   "status": "paused",
+  "stage": "planned",
   "completed_tasks": [
-    {"id": 1, "name": "discuss-phase 5 — CONTEXT.md written (16 decisions)", "status": "done", "commit": "e9f2df2"}
+    {"id": "context", "name": "discuss-phase 5 — CONTEXT.md written (16 decisions D-01..D-16)", "status": "done", "commit": "e9f2df2"},
+    {"id": "pattern-mapping", "name": "Pattern mapper produced 05-PATTERNS.md (12 files, 11 analogs)", "status": "done", "commit": "afdece6"},
+    {"id": "plan-01", "name": "Plan 05-01: oracle_type DB column (DDL + Pydantic + MODEL.md) — Wave 1", "status": "done", "commit": "afdece6"},
+    {"id": "plan-02", "name": "Plan 05-02: _format_message() enrichment with id_to_text — Wave 1", "status": "done", "commit": "afdece6"},
+    {"id": "plan-03", "name": "Plan 05-03: UncertaintyDrivenStrategy + BoundaryDrivenStrategy — Wave 2", "status": "done", "commit": "afdece6"},
+    {"id": "plan-04", "name": "Plan 05-04: N×M×K harness with real OracleAgent + baseline dedup — Wave 3", "status": "done", "commit": "afdece6"},
+    {"id": "plan-05", "name": "Plan 05-05: Bootstrap CI analysis layer (src/analysis.py + compute_ci.py + notebook) — Wave 4", "status": "done", "commit": "afdece6"},
+    {"id": "verify-plans", "name": "Plan-checker passed after 1 revision (2 blockers + 4 warnings resolved)", "status": "done", "commit": "afdece6"}
   ],
   "remaining_tasks": [
-    {"id": 2, "name": "plan-phase 5 — create PLAN.md with task breakdown", "status": "not_started"},
-    {"id": 3, "name": "execute-phase 5 — implement strategies, harness, CI analysis", "status": "not_started"}
+    {"id": "execute-wave-1", "name": "Execute Wave 1: 05-01 (DDL) + 05-02 (_format_message) — parallelizable", "status": "not_started"},
+    {"id": "execute-wave-2", "name": "Execute Wave 2: 05-03 (new strategies)", "status": "not_started"},
+    {"id": "execute-wave-3", "name": "Execute Wave 3: 05-04 (harness — depends on 05-01 and 05-03)", "status": "not_started"},
+    {"id": "execute-wave-4", "name": "Execute Wave 4: 05-05 (bootstrap CI — depends on 05-01 and 05-04)", "status": "not_started"},
+    {"id": "verify-phase", "name": "/gsd-verify-work 5 — confirm 3 strategies + CI on turns-to-convergence", "status": "not_started"}
   ],
   "blockers": [],
-  "human_actions_pending": [],
+  "human_actions_pending": [
+    {
+      "action": "Ensure ANTHROPIC_API_KEY is set before running the harness",
+      "context": "Plan 05-04 wires a real OracleAgent (B-02 fix). Production path requires a valid Anthropic API key. HARNESS_DRY_RUN=1 env flag swaps in MockOracle for smoke tests, but real ablation requires live LLM calls.",
+      "blocking": false
+    },
+    {
+      "action": "Confirm max_workers default in experiments/configs/harness.yaml suits Anthropic tier",
+      "context": "Plan 05-04 creates harness.yaml with default max_workers (likely 4). 27 default runs at 4 concurrent workers means 4 simultaneous LLM conversations. Adjust if your rate-limit tier is tighter or looser.",
+      "blocking": false
+    }
+  ],
   "decisions": [
-    {"decision": "UncertaintyDrivenStrategy targets highest-uncertainty cluster (lowest mean soft-assignment confidence)", "rationale": "Directly uses f_uncertainty output; meaningfully distinct from Random", "phase": "5"},
-    {"decision": "BoundaryDrivenStrategy targets group of items confused between most-confused cluster pair (A,B)", "rationale": "Conversationally actionable — oracle sees a pattern not isolated points; oracle can give merge/split/rule feedback on the group", "phase": "5"},
-    {"decision": "Degenerate fallback = ask_question with generic payload (hand initiative to oracle)", "rationale": "User: 'ask the oracle for clarification' — semantically meaningful, not a crash or silent random fallback", "phase": "5"},
-    {"decision": "Oracle has full freedom within response — no oracle-initiated turns needed for Phase 5", "rationale": "Oracle can respond with any feedback type to any agent action; architecture already supports this", "phase": "5"},
-    {"decision": "27 runs default (3 strategies x 3 personas x 3 seeds), tunable via config", "rationale": "Enough for meaningful CIs at research scale, manageable LLM cost", "phase": "5"},
-    {"decision": "Parallel execution via ThreadPoolExecutor", "rationale": "User preference; SQLite WAL mode + check_same_thread=False already supports concurrent connections", "phase": "5"},
-    {"decision": "Cross-product YAML config with optional exclude list", "rationale": "Compact, easy to extend; exclusions allow skipping specific combos", "phase": "5"},
-    {"decision": "oracle_type as new column in CREATE TABLE DDL — fresh DB start, no migration", "rationale": "User fine restarting fresh; no need for ALTER TABLE complexity", "phase": "5"},
-    {"decision": "Bootstrap CI: src/analysis.py + examples/compute_ci.py (table + --json) + notebooks/analysis.ipynb", "rationale": "CLI satisfies ALAB-03; notebook useful for exploring past runs interactively", "phase": "5"},
-    {"decision": "Targeted action messages include subset only — actual item texts from id_to_text", "rationale": "Lower cognitive load, focused feedback; _format_message() needs enrichment (currently placeholder)", "phase": "5"}
+    {
+      "decision": "Skipped RESEARCH.md / Nyquist Validation Architecture",
+      "rationale": "Invoked /gsd-plan-phase 5 --skip-research. CONTEXT.md already locked all 16 implementation decisions (D-01..D-16) and CANONICAL refs cover reusable assets. No new domain knowledge needed.",
+      "phase": "05"
+    },
+    {
+      "decision": "Wave structure: {01,02} → {03} → {04} → {05} (4 waves, not 3)",
+      "rationale": "Round-1 plan-checker B-01: Plan 04 imports new strategy classes from src/strategy.py at module top. Had 03 and 04 both been Wave 2, parallel execution would race and fail at import. Promoted Plan 04 to Wave 3 (depends_on [05-01, 05-03]) and Plan 05 to Wave 4.",
+      "phase": "05"
+    },
+    {
+      "decision": "Harness _run_one uses real OracleAgent + Anthropic client (NOT a MockOracle stub)",
+      "rationale": "Round-1 plan-checker B-02: original plan stubbed _run_one with MockOracle(satisfied=True), making every strategy converge in 1 turn → zero between-strategy variance → bootstrap CI in Plan 05 cannot distinguish strategies → phase goal unachievable. Revised: real OracleAgent by default, MockOracle only under HARNESS_DRY_RUN=1.",
+      "phase": "05"
+    },
+    {
+      "decision": "_format_message: empty payload is NOT a deviation",
+      "rationale": "Round-1 W-02: original plan called deviation() on every empty-payload show_subset/ask_question. RandomStrategy emits empty payloads by design (Phase 2 baseline contract), so under STRICT_MODE=1 the entire 'random' column of the ablation matrix would abort. Revised: deviation() retained ONLY for genuinely unexpected branches (unknown cluster_id, missing item_id in id_to_text).",
+      "phase": "05"
+    },
+    {
+      "decision": "Harness invokes run_baseline once per unique (persona, seed) — deduplicated across strategies",
+      "rationale": "Round-1 W-01: original plan declared a key_link to run_baseline (D-10) but never invoked it. Without baseline rows the 'no_dialogue (baseline)' row of the D-14 output table would be empty. Revised: baseline_keys = sorted({(c.persona_id, c.seed) for c in combos}) → one baseline future per unique pair.",
+      "phase": "05"
+    },
+    {
+      "decision": "Embedding store computed once in harness orchestrator (not per thread)",
+      "rationale": "Round-1 W-04: original plan called EmbeddingStore.compute_and_save inside _run_one, causing up to 27 redundant embedding passes under 4 workers. Revised: _build_embedding_store(records) called once in run_harness; passed read-only to every _run_one call.",
+      "phase": "05"
+    },
+    {
+      "decision": "Verify commands rewritten as portable python -c / subprocess one-liners",
+      "rationale": "Round-1 W-03: Bash-only pipelines (grep | awk | && | >NUL) do not run on PowerShell (documented env shell on Windows 11). Plans 04 and 05 now use python -c invariant checks. Plans 01 and 03 still contain some grep -q calls but checker considered those out of scope for this fix.",
+      "phase": "05"
+    }
   ],
-  "uncommitted_files": [
-    "embeddings/session_embeddings.npy (deleted — pre-existing, not this session)",
-    "check_db.py (untracked — pre-existing)",
-    "report_corrections.md (untracked — pre-existing)"
-  ],
-  "next_action": "/clear then /gsd-plan-phase 5",
-  "context_notes": "discuss-phase 5 complete. CONTEXT.md has 16 decisions (D-01 through D-16). Key design insight: BoundaryDriven targets a GROUP of items confused between a cluster pair — not single points (user explicitly rejected single-point focus as conversationally useless). _format_message() currently sends a useless placeholder for show_subset — Phase 5 must enrich it. No blocking constraints discovered this session."
+  "uncommitted_files": [],
+  "next_action": "/clear, then /gsd-execute-phase 5",
+  "context_notes": "Phase 5 fully planned and checker-verified. 5 plans across 4 waves cover ALAB-01 (05-02 + 05-03), ALAB-02 (05-04), ALAB-03 (05-05), EXP-V2-01 (05-01 + 05-04). All 16 CONTEXT.md decisions referenced. Pattern-mapper produced 12 file analogs in 05-PATTERNS.md. Plan-checker passed after one revision round addressing 2 blockers (dependency miss + scope reduction to 1-turn stub) and 4 warnings (key-link unimplemented, deviation() over-scoping, Bash-only verify pipelines, redundant embedding compute). Real LLM cost begins at execute-phase; smoke-test path available via HARNESS_DRY_RUN=1."
 }
