@@ -15,7 +15,7 @@
 - [x] **Phase 1: Pre-Code Obligations and Foundation** — COMPLETE
 - [x] **Phase 2: Clustering Agent Core** — Conversational loop, f_* functions, feedback types, hierarchy, web UI, multiple backends, UMAP projection, persistent sessions — COMPLETE 2026-05-10
 - [x] **Phase 3: Oracle Agent** — Configurable LLM oracle with noise, cognitive load, drift detection — COMPLETE 2026-05-12
-- [ ] **Phase 4: Judge Agent** — Convergence detection, per-turn metrics, no-dialogue baseline, database
+- [x] **Phase 4: Judge Agent** — Convergence detection, per-turn metrics, no-dialogue baseline, database — COMPLETE 2026-05-16
 - [ ] **Phase 5: Ablation Harness and Strategies** — 3 strategies, N×M experiment runner, bootstrap CI
 - [ ] **Phase 6: Generalization and Human Validation** — Mapping function, held-out evaluation, human study N≥10
 

@@ -2,17 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 4 — Judge Agent
-current_plan: Phase 4 planned — 6 plans in 3 waves, ready to execute
-status: executing
-stopped_at: "Phase 4 planning complete. 6 plans in 3 waves verified. Key plan structure: Wave 1 (04-01 DB foundation + Pydantic triples, 04-02 stopping criteria + logging_setup), Wave 2 (04-03 PairBag/judge.py/run_baseline, 04-04 loop wiring + DB writes per turn), Wave 3 (04-05 tests, 04-06 CLI/UI/docs). Notable fixes applied during verification: _NullNamer return type, TurnCreate field name, cumulative vs binary contradiction_count in SocketIO, deliberate omission docs for system_message/target, deviation() sentinel for resumed sessions."
-last_updated: "2026-05-16T18:20:43.668Z"
+current_phase: 5 — Ablation Harness and Strategies
+current_plan: Phase 4 complete — ready to plan Phase 5
+status: ready_to_plan
+stopped_at: "Phase 4 execution complete — all 6 plans executed across 3 waves (Wave 1: 04-01 DB layer + 04-02 stopping stubs; Wave 2: 04-03 judge.py + 04-04 loop wiring; Wave 3: 04-05 tests + 04-06 CLI/UI/docs). 41 Phase 4 tests passing. Schema bug fixed: turns.deleted_at column added."
+last_updated: "2026-05-16T00:00:00.000Z"
 progress:
-  total_phases: 3
-  completed_phases: 0
+  total_phases: 6
+  completed_phases: 4
   total_plans: 6
-  completed_plans: 1
-  percent: 0
+  completed_plans: 6
 ---
 
 # Project State: Conversational Clustering
@@ -43,12 +42,12 @@ progress:
 Phase 1 [##########] 100% Pre-Code Obligations and Foundation ✓
 Phase 2 [##########] 100% Clustering Agent Core (v1 ✓, BACK-V2-01 ✓, VIZ-V2-01 ✓, UI-V2-01 ✓)
 Phase 3 [##########] 100% Oracle Agent (ORC-01 ✓, ORC-02 ✓, ORC-03 ✓, ORC-04 ✓, FB-04 ✓)
-Phase 4 [▓▓        ]  20% Judge Agent — planned (6 plans, 3 waves)
+Phase 4 [##########] 100% Judge Agent (DB layer ✓, f_eval ✓, PairBag ✓, run_baseline ✓, UI panels ✓)
 Phase 5 [          ]   0% Ablation Harness and Strategies
 Phase 6 [          ]   0% Generalization and Human Validation
 ```
 
-**Overall:** 3/6 phases complete (Phase 4 pending)
+**Overall:** 4/6 phases complete
 
 ---
 
@@ -56,9 +55,9 @@ Phase 6 [          ]   0% Generalization and Human Validation
 
 | Metric | Value |
 |--------|-------|
-| Phases complete | 3/6 |
-| Plans complete | 17/? |
-| Requirements satisfied | 23/37 |
+| Phases complete | 4/6 |
+| Plans complete | 23/? |
+| Requirements satisfied | 29/37 |
 | Blockers | 0 |
 
 ---
