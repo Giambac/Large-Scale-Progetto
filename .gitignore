@@ -14,3 +14,5 @@ dataset/
 # SQLite experiment database (local only — never commit)
 experiments.db
 *.db
+*.db-shm
+*.db-wal
