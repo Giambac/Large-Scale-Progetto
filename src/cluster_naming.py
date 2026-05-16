@@ -186,7 +186,7 @@ class OpenAIClusterNamer:
     API key: set OPENAI_API_KEY env var.
     """
 
-    def __init__(self, api_key: str, model: str = "gpt-4o-mini") -> None:
+    def __init__(self, api_key: str, model: str = "gpt-5.4-nano") -> None:
         from openai import OpenAI  # type: ignore[import]
         self._client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1",)
         self._model = model
