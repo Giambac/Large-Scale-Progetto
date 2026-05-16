@@ -1,4 +1,26 @@
+# Web stack (FastAPI + uvicorn + python-socketio ASGI)
 fastapi>=0.110
 uvicorn[standard]>=0.27
 python-socketio>=5.11
 python-multipart>=0.0.9
+jinja2>=3.1
+httpx>=0.27
+
+# Scientific / ML
+numpy>=1.26
+scikit-learn>=1.4
+sentence-transformers>=2.7
+hdbscan>=0.8.33
+umap-learn>=0.5.5
+
+# LLM clients — pick at least one (key resolved by priority in src/llm_key.py:
+#   ANTHROPIC_API_KEY > OPENAI_API_KEY > GOOGLE_API_KEY).
+# All three are listed so any backend works out of the box; comment out
+# the ones you don't plan to use.
+# anthropic>=0.34
+# google-genai>=1.0
+
+openai>=1.30
+
+# Testing
+pytest>=8.0
