@@ -10,3 +10,7 @@ __pycache__/
 sessions/
 embeddings/
 dataset/
+
+# SQLite experiment database (local only — never commit)
+experiments.db
+*.db
