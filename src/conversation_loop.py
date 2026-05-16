@@ -57,23 +57,98 @@ if TYPE_CHECKING:
     from src.judge import PairBag as _PairBagT
 
 
-def _format_message(action: object, state: ClusteringState) -> str:
+def _format_message(
+    action: object,
+    state: ClusteringState,
+    id_to_text: dict[int, str] | None = None,
+) -> str:
     """
     Convert an Action to a human-readable message for the oracle.
-    Phase 2: plain text summary. Phase 3 Oracle Agent will parse this.
+
+    Phase 2: plain text summary. Phase 3 Oracle Agent parses this.
+    Phase 5 (D-05, D-16): when the action payload carries targeted item_ids or a cluster_id,
+    the message includes actual item text and cluster names so the oracle can give focused
+    feedback. Empty payloads fall back to the Phase 2 placeholder strings — this is the
+    LEGITIMATE contract for RandomStrategy (Phase 2 baseline) and run_baseline, NOT an
+    unexpected branch. deviation() is reserved for payloads that genuinely violate
+    caller expectations (unknown cluster_id, missing item_id mapping).
+
+    Args:
+        action:      Action dataclass (action_type + payload dict).
+        state:       Current ClusteringState (cluster id -> name lookup).
+        id_to_text:  Optional item_id -> text mapping. None preserves Phase 2 backward-compat.
     """
     from src.strategy import Action
     assert isinstance(action, Action), f"Expected Action, got {type(action)}"
+
+    # Build a cluster id -> name lookup once.
+    cluster_name = {c.id: c.name for c in state.clusters}
+
     if action.action_type == "show_full":
         cluster_summary = "; ".join(
             f"Cluster {c.id} '{c.name}' ({len(c.item_ids)} items)"
             for c in state.clusters
         )
         return f"Current clustering: {cluster_summary}"
+
     elif action.action_type == "show_subset":
+        item_ids = action.payload.get("item_ids") or []
+        if id_to_text and item_ids:
+            cluster_a = action.payload.get("cluster_a")
+            cluster_b = action.payload.get("cluster_b")
+            # GENUINE deviation: payload references a cluster_id not in state.clusters.
+            if cluster_a is not None and cluster_a not in cluster_name:
+                deviation(
+                    "show_subset payload references unknown cluster_a",
+                    cluster_a=cluster_a,
+                    known_ids=list(cluster_name.keys()),
+                )
+            if cluster_b is not None and cluster_b not in cluster_name:
+                deviation(
+                    "show_subset payload references unknown cluster_b",
+                    cluster_b=cluster_b,
+                    known_ids=list(cluster_name.keys()),
+                )
+            # GENUINE deviation: payload references item_ids missing from id_to_text.
+            missing = [i for i in item_ids if i not in id_to_text]
+            if missing:
+                deviation(
+                    "show_subset payload references item_ids missing from id_to_text",
+                    missing=missing[:10],
+                    n_missing=len(missing),
+                )
+            items_text = ", ".join(
+                f"'{id_to_text[i]}'" for i in item_ids if i in id_to_text
+            )
+            name_a = cluster_name.get(cluster_a, f"cluster {cluster_a}")
+            name_b = cluster_name.get(cluster_b, f"cluster {cluster_b}")
+            return (
+                f"These items are ambiguous between cluster '{name_a}' and cluster "
+                f"'{name_b}': {items_text}. How would you distinguish them?"
+            )
+        # Phase 2 legacy fallback — empty payload or no id_to_text.
+        # NOT a deviation: RandomStrategy emits this shape by design (W-02 fix).
         return f"Showing a subset of clusters at turn {state.turn_index}."
+
     elif action.action_type == "ask_question":
+        cluster_id = action.payload.get("cluster_id")
+        if cluster_id is not None:
+            # GENUINE deviation: payload references a cluster_id not in state.clusters.
+            if cluster_id not in cluster_name:
+                deviation(
+                    "ask_question payload references unknown cluster_id",
+                    cluster_id=cluster_id,
+                    known_ids=list(cluster_name.keys()),
+                )
+            cname = cluster_name.get(cluster_id, f"cluster {cluster_id}")
+            return (
+                f"Cluster '{cname}' has the most ambiguous assignments. "
+                f"Do you want to split it, move items out, or rename it?"
+            )
+        # Phase 2 legacy fallback — empty payload.
+        # NOT a deviation: RandomStrategy emits this shape by design (W-02 fix).
         return "Do any clusters need to be split, merged, or items moved?"
+
     elif action.action_type == "stop":
         return "I believe the clustering is satisfactory. Are you happy with it?"
     else:
@@ -238,7 +313,7 @@ def run_conversation(
 
         # Step 3a: Format message and compute per-turn cognitive load (Phase 3 — ORC-03, D-06)
         # f_cognitive_load is imported at function body level (before while), not inside the loop.
-        message = _format_message(action, state)
+        message = _format_message(action, state, id_to_text)
         cognitive_load = f_cognitive_load(state, message)
 
         # Step 3b: Get oracle reply — call unconditionally with global_instructions + cognitive_load (D-27)
