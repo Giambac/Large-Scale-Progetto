@@ -11,6 +11,10 @@
     <div id="status-banner">Status: Idle</div>
     <form id="upload-form" enctype="multipart/form-data">
       <input type="file" name="file" id="file-input" accept=".csv,.jsonl">
+      <select id="backend-select">
+        <option value="hdbscan">HDBSCAN</option>
+        <option value="kmeans">K-Means</option>
+      </select>
       <button type="submit">Upload Dataset</button>
     </form>
   </header>
@@ -24,7 +28,7 @@
   <main class="layout">
     <!-- Left: cluster cards grid (UI-01) -->
     <section id="cluster-cards" class="cluster-grid">
-      <p class="placeholder">Upload a dataset to start a session.</p>
+      <p class="placeholder" id="session-placeholder">Upload a dataset to start a session.</p>
     </section>
     <!-- Right: metrics sidebar (UI-01) -->
     <aside id="metrics-sidebar">

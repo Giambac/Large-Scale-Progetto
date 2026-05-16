@@ -370,8 +370,12 @@ def build_initial_clustering_state(
     if backend is None:
         backend = HDBSCANBackend(min_cluster_size=min_cluster_size)
     labels, soft_probs_matrix = backend.fit(embeddings)
+    id_remap = {
+        cluster_id: new_id
+        for new_id, cluster_id in enumerate(sorted(set(labels.tolist())), start=1)
+    }
     # backend.fit() guarantees no -1 labels — skip assign_noise_to_nearest
-    assignments: dict[int, int] = {i: int(labels[i]) for i in range(len(labels))}
+    assignments: dict[int, int] = {i: id_remap[int(labels[i])] for i in range(len(labels))}
     assert -1 not in assignments.values(), "BUG: backend.fit returned -1 labels"
 
     # Group item_ids by cluster_id
@@ -384,7 +388,7 @@ def build_initial_clustering_state(
 
     # Create Cluster objects with LLM-generated names and descriptions
     clusters = []
-    for cluster_id in sorted(cluster_items.keys()):
+    for new_id, cluster_id in enumerate(sorted(cluster_items.keys()), start=1):
         item_ids = cluster_items[cluster_id]
         sample_ids = item_ids[:5]
         sample_texts = [id_to_text[i] for i in sample_ids]
@@ -392,7 +396,7 @@ def build_initial_clustering_state(
         naming_result = namer.name_cluster(sample_texts, cluster_id)
         print(f"[timing] namer.name_cluster (cluster {cluster_id}): {time.perf_counter() - t0:.2f}s")
         clusters.append(Cluster(
-            id=cluster_id,
+            id=new_id,
             name=naming_result["name"],
             description=naming_result["description"],
             item_ids=item_ids,

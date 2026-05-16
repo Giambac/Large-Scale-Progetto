@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import socketio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -206,6 +206,7 @@ _session: dict = {
     "task": None,     # Background task handle or None
     "log_path": "audit_log.jsonl",
     "session_dir": None,   # path to sessions/<timestamp>/ for current session
+    "progress": None,
 }
 
 # Lock to serialise concurrent /upload requests — prevents two background tasks
@@ -305,9 +306,12 @@ async def list_sessions():
         if not line:
             continue
         state = deserialize_state(line)
+        name_path = os.path.join(entry.path, "name.txt")
+        session_name = open(name_path, encoding="utf-8").read().strip() if os.path.exists(name_path) else entry.name
         sessions.append({
             "session_id": entry.name,
             "timestamp": entry.name,
+            "name": session_name,
             "cluster_count": len(state.clusters),
             "turn_count": state.turn_index,
         })
@@ -361,30 +365,28 @@ async def resume_session(session_id: str):
 
 
 @app.post("/upload")
-async def upload_dataset(file: UploadFile = File(...)):
-    """
-    Accepts multipart/form-data with 'file' field (CSV or JSONL).
-    Clears existing session state and starts a new conversation loop in a worker thread.
-    D-15: single session per server run. _session_lock prevents concurrent
-    uploads from racing on shared session state and background task.
-    """
+async def upload_dataset(file: UploadFile = File(...), backend: str = Form("hdbscan")):
+    if backend not in ("hdbscan", "kmeans"):
+        raise HTTPException(status_code=400, detail=f"Invalid backend: {backend}")
     if not file.filename:
         raise HTTPException(status_code=400, detail="Upload received empty filename")
 
-    content = (await file.read()).decode("utf-8")
+    raw = await file.read()
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        content = raw.decode("latin-1")
+
     records = _parse_upload(content, file.filename)
     if len(records) < 2:
         raise HTTPException(status_code=400, detail=f"Dataset too small: {len(records)} records (need >= 2)")
 
     with _session_lock:
-        # Reset session state (D-15): clear old state before starting fresh session
         _session["state"] = None
         _session["task"] = None
-
-        # Start the background thread — heavy lifting (embeddings, clustering, LLM) runs there.
         t = threading.Thread(
             target=_run_conversation_background,
-            args=(records, _session["log_path"]),
+            args=(records, _session["log_path"], backend),
             daemon=True,
         )
         t.start()
@@ -394,8 +396,41 @@ async def upload_dataset(file: UploadFile = File(...)):
 
 
 # ── Background task ───────────────────────────────────────────────────────────
+def _generate_session_name(namer: object, cluster_names: list[str]) -> str:
+    """Generate a short human-readable session name from cluster names using the LLM."""
+    import re, time
+    try:
+        clusters_str = ", ".join(cluster_names[:8])
+        prompt = (
+            f"Given these cluster names from a dataset: {clusters_str}\n\n"
+            "Generate a very short session title (3-6 words) that captures the main theme. "
+            "Respond with ONLY the title, no punctuation, no quotes."
+        )
+        if hasattr(namer, '_client') and hasattr(namer._client, 'messages'):
+            # Anthropic
+            response = namer._client.messages.create(
+                model="claude-haiku-4-5", max_tokens=32,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.content[0].text.strip()
+        elif hasattr(namer, '_client') and hasattr(namer._client, 'chat'):
+            # OpenAI/Groq
+            response = namer._client.chat.completions.create(
+                model=namer._model, max_completion_tokens=32,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.choices[0].message.content.strip()
+        else:
+            # Google
+            response = namer._client.models.generate_content(
+                model=namer._model, contents=prompt
+            )
+            return response.text.strip()
+    except Exception as e:
+        print(f"[session_name] Failed: {e}")
+        return ""
 
-def _run_conversation_background(records: list[dict], log_path: str) -> None:
+def _run_conversation_background(records: list[dict], log_path: str, backend_name: str = "hdbscan") -> None:
     """
     Runs the full conversation pipeline in a background thread.
 
@@ -437,6 +472,9 @@ def _run_conversation_background(records: list[dict], log_path: str) -> None:
     # Use session-scoped audit log (replaces module-level "audit_log.jsonl")
     session_log_path = os.path.join(session_dir, "audit_log.jsonl")
 
+    time.sleep(1.0)
+    _session["progress"] = {"stage": "embeddings", "pct": 0, "msg": "Computing embeddings..."}
+    emitter.emit("progress_update", _session["progress"])
     texts = [r["text"] for r in records]
     os.makedirs("embeddings", exist_ok=True)
     _cached_path = "embeddings/embeddings.npy"
@@ -456,24 +494,38 @@ def _run_conversation_background(records: list[dict], log_path: str) -> None:
     # Copy embeddings to session dir for future resume (D-26)
     session_embeddings_path = os.path.join(session_dir, "embeddings.npy")
     shutil.copy2(_session_emb_path, session_embeddings_path)
+    _session["progress"] = {"stage": "embeddings", "pct": 100, "msg": "Embeddings ready"}
+    emitter.emit("progress_update", _session["progress"])
 
     # D-18: instantiate the backend selected via --backend CLI flag
-    if _backend_name == "kmeans":
+    if backend_name == "kmeans":
         backend = KMeansBackend()
-    elif _backend_name == "hdbscan":
+    elif backend_name == "hdbscan":
         backend = HDBSCANBackend()
     else:
-        assert False, f"Unknown backend: {_backend_name!r}"
+        assert False, f"Unknown backend: {backend_name!r}"
 
+    _session["progress"] = {"stage": "clustering", "pct": 0, "msg": "Clustering in progress..."}
+    emitter.emit("progress_update", _session["progress"])
     t0 = time.perf_counter()
     initial_state = build_initial_clustering_state(
         store.get_all(), records, namer, backend=backend
     )
     print(f"[timing] build_initial_clustering_state: {time.perf_counter() - t0:.2f}s")
+    _session["progress"] = {"stage": "clustering", "pct": 100, "msg": "Clustering complete"}
+    emitter.emit("progress_update", _session["progress"])
     _session["state"] = initial_state
 
+    # Generate human-readable session name
+    cluster_names = [c.name for c in initial_state.clusters]
+    session_name = _generate_session_name(namer, cluster_names)
+    if session_name:
+        with open(os.path.join(session_dir, "name.txt"), "w", encoding="utf-8") as _f:
+            _f.write(session_name)
+        print(f"[session] Name: {session_name}")
+
     # D-17: log chosen K to session-scoped audit_log.jsonl as backend_init event so runs are reproducible
-    if _backend_name == "kmeans":
+    if backend_name == "kmeans":
         _k_chosen = backend.k
         _backend_init_event = {
             "event": "backend_init",
@@ -501,7 +553,11 @@ def _run_conversation_background(records: list[dict], log_path: str) -> None:
     id_to_text = {i: r["text"] for i, r in enumerate(records)}
 
     # Emit initial projection (D-22: once after initial clustering)
+    _session["progress"] = {"stage": "umap", "pct": 0, "msg": "Computing UMAP projection..."}
+    emitter.emit("progress_update", _session["progress"])
     compute_and_emit_projection(store, initial_state, emitter)
+    _session["progress"] = {"stage": "umap", "pct": 100, "msg": "Projection ready"}
+    emitter.emit("progress_update", _session["progress"])
 
     # Phase 2: use a neutral MockOracle (Phase 3 replaces with real Oracle Agent)
     neutral_reply = OracleReply(raw_text="", satisfied=False, turn_cognitive_load=0.0)
@@ -532,36 +588,66 @@ def _run_conversation_background(records: list[dict], log_path: str) -> None:
 
 
 # ── Upload parser helper ──────────────────────────────────────────────────────
+def _detect_text_field(records: list[dict]) -> str:
+    """
+    Detect the text field by picking the string column with highest average length
+    across a sample of records. Reliable for any text dataset regardless of column name.
+    """
+    TEXT_FIELDS_PRIORITY = ("text", "reviewText", "Description", "body", "content", "review", "comment")
+
+    if not records:
+        assert False, "No records to detect text field from"
+
+    # First try known field names
+    for key in TEXT_FIELDS_PRIORITY:
+        if key in records[0]:
+            return key
+
+    # Sample up to 20 records and pick string field with highest average length
+    sample = records[:20]
+    string_fields = {
+        key for key, val in sample[0].items()
+        if isinstance(val, str)
+    }
+
+    best_key = None
+    best_avg = 0.0
+    for key in string_fields:
+        avg_len = sum(len(r.get(key, "")) for r in sample) / len(sample)
+        if avg_len > best_avg:
+            best_avg = avg_len
+            best_key = key
+
+    assert best_key is not None, f"No string field found. Available fields: {list(records[0].keys())}"
+    print(f"[parse] Auto-detected text field: '{best_key}' (avg length: {best_avg:.0f} chars)")
+    return best_key
 
 def _parse_upload(content: str, filename: str) -> list[dict]:
     """Parse CSV or JSONL upload into list of dicts with 'text' field.
-    Accepts 'text' or 'reviewText' as the text field name.
+    Auto-detects the text field by average string length if not a known field name.
     """
     import csv
     import json
 
-    TEXT_FIELDS = ("text", "reviewText", "Description")
-
-    def _extract_text(mapping: dict) -> str:
-        for key in TEXT_FIELDS:
-            if key in mapping:
-                return mapping[key]
-        assert False, f"Record missing text field (tried {TEXT_FIELDS}): {mapping}"
-
-    records: list[dict] = []
+    records_raw = []
     if filename.endswith(".jsonl"):
         for line in content.splitlines():
             line = line.strip()
             if line:
-                record = json.loads(line)
-                records.append({"item_id": len(records), "text": _extract_text(record)})
+                records_raw.append(json.loads(line))
     else:
-        # Assume CSV with 'text' or 'reviewText' column
         reader = csv.DictReader(io.StringIO(content))
-        for row in reader:
-            records.append({"item_id": len(records), "text": _extract_text(row)})
-    return records
+        records_raw = list(reader)
 
+    assert records_raw, "Empty dataset"
+
+    text_field = _detect_text_field(records_raw)
+
+    return [
+        {"item_id": i, "text": r[text_field]}
+        for i, r in enumerate(records_raw)
+        if r.get(text_field, "").strip()
+    ]
 
 # ── SocketIO connect handler ──────────────────────────────────────────────────
 
@@ -584,6 +670,12 @@ async def connect(sid, environ):
             "cognitive_load": 0.0,
         }, to=sid)
 
+@sio.event
+async def request_progress(sid):
+    """Client asks for current progress on (re)connect."""
+    progress = _session.get("progress")
+    if progress and _session.get("state") is None:
+        await sio.emit("progress_update", progress, to=sid)
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
