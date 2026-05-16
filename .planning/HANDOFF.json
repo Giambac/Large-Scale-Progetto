@@ -1,31 +1,39 @@
 {
   "version": "1.0",
-  "timestamp": "2026-05-12T16:00:00Z",
-  "phase": "4",
-  "phase_name": "Judge Agent",
-  "phase_dir": ".planning/phases/04-judge-agent",
+  "timestamp": "2026-05-16T21:59:28.492Z",
+  "phase": "5",
+  "phase_name": "Ablation Harness and Strategies",
+  "phase_dir": ".planning/phases/05-ablation-harness-and-strategies",
   "plan": 0,
   "task": 0,
   "total_tasks": 0,
   "status": "paused",
   "completed_tasks": [
-    {"id": 1, "name": "Phase 3: Oracle Agent — all 5 plans executed and verified (5/5 must-haves)", "status": "done", "commit": "f0b888c"},
-    {"id": 2, "name": "Phase 3 UAT — 9/10 pass, 1 minor pre-existing bug fixed (155 pass, 1 skip)", "status": "done", "commit": "85e5898"}
+    {"id": 1, "name": "discuss-phase 5 — CONTEXT.md written (16 decisions)", "status": "done", "commit": "e9f2df2"}
   ],
   "remaining_tasks": [
-    {"id": 3, "name": "Plan Phase 4 (Judge Agent)", "status": "not_started"},
-    {"id": 4, "name": "Execute Phase 4", "status": "not_started"}
+    {"id": 2, "name": "plan-phase 5 — create PLAN.md with task breakdown", "status": "not_started"},
+    {"id": 3, "name": "execute-phase 5 — implement strategies, harness, CI analysis", "status": "not_started"}
   ],
   "blockers": [],
   "human_actions_pending": [],
   "decisions": [
-    {"decision": "cognitive_load forwarded from loop into oracle.reply() (was dead code — CR-01 fix)", "rationale": "Loop should own the computation per ORC-03/D-06 architecture", "phase": "3"},
-    {"decision": "events.jsonl sidecar for oracle_init/drift_event (not audit_log.jsonl)", "rationale": "load_audit_log() crashes on non-state records — Pitfall 5", "phase": "3"},
-    {"decision": "isinstance(oracle, OracleAgent) branch in run_conversation() for Phase 3 wiring", "rationale": "OracleProtocol.reply() lacks global_instructions and cognitive_load params — WR-04 is a known gap for Phase 4", "phase": "3"},
-    {"decision": "NoiseParams validation asserts live in OracleAgent.__init__, not NoiseParams dataclass", "rationale": "By design — plain dataclass, validation at agent construction boundary", "phase": "3"},
-    {"decision": "test_parse_feedback_real_llm import guard fixed + llm mark registered", "rationale": "import anthropic was before pytest.skip guard — moved after. pyproject.toml now registers llm mark.", "phase": "2-fix"}
+    {"decision": "UncertaintyDrivenStrategy targets highest-uncertainty cluster (lowest mean soft-assignment confidence)", "rationale": "Directly uses f_uncertainty output; meaningfully distinct from Random", "phase": "5"},
+    {"decision": "BoundaryDrivenStrategy targets group of items confused between most-confused cluster pair (A,B)", "rationale": "Conversationally actionable — oracle sees a pattern not isolated points; oracle can give merge/split/rule feedback on the group", "phase": "5"},
+    {"decision": "Degenerate fallback = ask_question with generic payload (hand initiative to oracle)", "rationale": "User: 'ask the oracle for clarification' — semantically meaningful, not a crash or silent random fallback", "phase": "5"},
+    {"decision": "Oracle has full freedom within response — no oracle-initiated turns needed for Phase 5", "rationale": "Oracle can respond with any feedback type to any agent action; architecture already supports this", "phase": "5"},
+    {"decision": "27 runs default (3 strategies x 3 personas x 3 seeds), tunable via config", "rationale": "Enough for meaningful CIs at research scale, manageable LLM cost", "phase": "5"},
+    {"decision": "Parallel execution via ThreadPoolExecutor", "rationale": "User preference; SQLite WAL mode + check_same_thread=False already supports concurrent connections", "phase": "5"},
+    {"decision": "Cross-product YAML config with optional exclude list", "rationale": "Compact, easy to extend; exclusions allow skipping specific combos", "phase": "5"},
+    {"decision": "oracle_type as new column in CREATE TABLE DDL — fresh DB start, no migration", "rationale": "User fine restarting fresh; no need for ALTER TABLE complexity", "phase": "5"},
+    {"decision": "Bootstrap CI: src/analysis.py + examples/compute_ci.py (table + --json) + notebooks/analysis.ipynb", "rationale": "CLI satisfies ALAB-03; notebook useful for exploring past runs interactively", "phase": "5"},
+    {"decision": "Targeted action messages include subset only — actual item texts from id_to_text", "rationale": "Lower cognitive load, focused feedback; _format_message() needs enrichment (currently placeholder)", "phase": "5"}
   ],
-  "uncommitted_files": [],
-  "next_action": "Run /gsd-plan-phase 4 to plan the Judge Agent phase",
-  "context_notes": "Phase 3 fully done — UAT passed, pre-existing bug fixed, 155 tests pass (1 skipped). WR-04 (stale OracleProtocol.reply() signature) is the most likely REVIEW.md item to affect Phase 4 Judge Agent integration — the isinstance(oracle, OracleAgent) branch in run_conversation() will need to be resolved cleanly."
+  "uncommitted_files": [
+    "embeddings/session_embeddings.npy (deleted — pre-existing, not this session)",
+    "check_db.py (untracked — pre-existing)",
+    "report_corrections.md (untracked — pre-existing)"
+  ],
+  "next_action": "/clear then /gsd-plan-phase 5",
+  "context_notes": "discuss-phase 5 complete. CONTEXT.md has 16 decisions (D-01 through D-16). Key design insight: BoundaryDriven targets a GROUP of items confused between a cluster pair — not single points (user explicitly rejected single-point focus as conversationally useless). _format_message() currently sends a useless placeholder for show_subset — Phase 5 must enrich it. No blocking constraints discovered this session."
 }
