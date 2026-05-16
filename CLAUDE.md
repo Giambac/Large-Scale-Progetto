@@ -27,6 +27,11 @@ Three core agents:
 - AuditLog serialized to JSONL every turn from Phase 1 — never skip this
 - Held-out split locked before ANY experiment runs — never modify it
 - All headline quantitative claims must include bootstrap 95% CIs
+- `src/db/` is the **ONLY** layer that touches SQL — if you find `sqlite3.execute` outside `src/db/`, fix it.
+- `experiments.db` lives at repo root (gitignored). Always open with `check_same_thread=False`, `PRAGMA journal_mode=WAL`, `PRAGMA foreign_keys=ON`. One connection per run, closed at run end.
+- `deviation()` in `src/logging_setup.py` marks unexpected-but-possible branches; `STRICT_MODE=1` raises `UnexpectedDeviation`; log.warning otherwise. Complementary to `assert` (not a replacement — `assert` = must-be-true; `deviation()` = may-happen-but-shouldn't).
+- JSONL `audit_log.jsonl` (in `sessions/<ts>/`) remains the **source of truth for replay**; the DB is the queryable index for cross-run analysis.
+- `datetime.utcnow()` is deprecated — always use `datetime.now(timezone.utc).isoformat()`.
 
 ## Coding Philosophy — Fail Loudly
 
@@ -55,6 +60,27 @@ numpy/sklearn/HDBSCAN/UMAP internal locking. uvicorn is native asyncio
 and needs no monkey-patching. CPU-bound work runs in `threading.Thread`;
 emits cross from worker threads to the event loop via
 `asyncio.run_coroutine_threadsafe` (see `SocketIOEmitter` in `web/app.py`).
+
+## Database
+
+SQLite at `experiments.db` (repo root). Schema: see `docs/MODEL.md`.
+
+**Tables:** `experiments`, `turns`, `oracle_feedback`
+
+**Query cross-run results:**
+```python
+from src.db.connection import connect
+conn = connect()
+rows = conn.execute(
+    "SELECT strategy_id, AVG(total_turns) FROM experiments WHERE dataset=? GROUP BY strategy_id",
+    ("dataset/train.jsonl",)
+).fetchall()
+```
+
+**Run no-dialogue baseline:**
+```
+python -m examples.run_baseline --dataset dataset/train.jsonl --persona curious --seed 42
+```
 
 ## Planning Artifacts
 

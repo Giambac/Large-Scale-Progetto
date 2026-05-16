@@ -9,6 +9,10 @@
 
 const socket = io();
 
+// D-28: pairwise accuracy history for sparkline (last 10 turns)
+const _pairwiseHistory = [];
+const _SPARKLINE_MAX = 10;
+
 // ── Session list (UI-V2-01, D-28) ────────────────────────────────
 function loadSessionsList() {
     fetch('/sessions')
@@ -68,18 +72,26 @@ socket.on('disconnect', function () {
 
 // ── State update: re-render cluster cards and metrics ─────────────
 socket.on('state_update', function (data) {
-    // data = { turn_index, clusters, soft_probs, cognitive_load }
+    // data = { turn_index, clusters, soft_probs, cognitive_load, pairwise_accuracy, convergence_signal, contradiction_count }
     // soft_probs: { str(item_id): { str(cluster_id): float } }
     document.getElementById('turn-index').textContent = 'Turn: ' + data.turn_index;
     document.getElementById('cognitive-load').textContent =
         'Cognitive Load: ' + (data.cognitive_load || 0).toFixed(3);
     renderClusterCards(data.clusters, data.soft_probs);
     appendHistoryEntry(data.turn_index);
+    // D-28: Judge Agent metrics
+    updateJudgeMetrics(data);
 });
 
 socket.on('session_stopped', function (data) {
     document.getElementById('status-banner').textContent =
         'Status: Stopped — ' + data.reason;
+    // Update convergence signal display on stop
+    const convEl = document.getElementById('convergence-signal');
+    if (convEl) {
+        convEl.textContent = 'Convergence: ' + data.reason;
+        convEl.style.fontWeight = 'bold';
+    }
 });
 
 // ── UMAP projection renderer (VIZ-V2-01) ─────────────────────────
@@ -197,6 +209,60 @@ function appendHistoryEntry(turnIndex) {
     li.textContent = 'Turn ' + turnIndex + ' — state updated';
     list.appendChild(li);
     list.scrollTop = list.scrollHeight;
+}
+
+// ── D-28: Judge Agent metrics (contradiction, convergence, pairwise accuracy) ─
+function updateJudgeMetrics(data) {
+    // Contradiction count
+    const cCount = document.getElementById('contradiction-count');
+    if (cCount) {
+        cCount.textContent = 'Contradictions: ' + (data.contradiction_count !== undefined ? data.contradiction_count : '—');
+    }
+
+    // Convergence signal
+    const convEl = document.getElementById('convergence-signal');
+    if (convEl) {
+        const signal = data.convergence_signal || 'running';
+        convEl.textContent = 'Convergence: ' + signal;
+        // Visual indicator: highlight when stopped
+        convEl.style.fontWeight = (signal !== 'running') ? 'bold' : 'normal';
+        convEl.style.color = (signal === 'oracle_satisfied') ? '#3cb44b'
+            : (signal === 'turn_budget') ? '#f58231'
+            : (signal === 'diminishing_returns') ? '#911eb4'
+            : '';
+    }
+
+    // Pairwise accuracy value
+    const paEl = document.getElementById('pairwise-accuracy');
+    if (paEl) {
+        const pa = data.pairwise_accuracy;
+        paEl.textContent = 'Pairwise Accuracy: ' + (pa !== undefined && pa !== null ? (pa * 100).toFixed(1) + '%' : '—');
+    }
+
+    // Sparkline — push to history, keep last 10
+    if (data.pairwise_accuracy !== undefined && data.pairwise_accuracy !== null) {
+        _pairwiseHistory.push(data.pairwise_accuracy);
+        if (_pairwiseHistory.length > _SPARKLINE_MAX) {
+            _pairwiseHistory.shift();
+        }
+        renderSparkline(_pairwiseHistory);
+    }
+}
+
+function renderSparkline(history) {
+    const container = document.getElementById('sparkline');
+    if (!container) return;
+    container.innerHTML = '';
+    if (history.length === 0) return;
+    const maxVal = Math.max.apply(null, history) || 1;
+    const H = 20; // px height
+    history.forEach(function (v) {
+        const bar = document.createElement('div');
+        const h = Math.max(2, Math.round((v / maxVal) * H));
+        bar.style.cssText = 'width:6px;background:#4363d8;border-radius:1px;height:' + h + 'px;';
+        bar.title = (v * 100).toFixed(1) + '%';
+        container.appendChild(bar);
+    });
 }
 
 // ── Upload form submission ─────────────────────────────────────────

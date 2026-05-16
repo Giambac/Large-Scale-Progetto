@@ -76,6 +76,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
             cognitive_load_score REAL   NOT NULL,
             cumulative_contradiction_count INTEGER NOT NULL,
             convergence_signal  TEXT,
+            deleted_at          TEXT,
             details             TEXT
         );
 

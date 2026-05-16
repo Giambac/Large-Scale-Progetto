@@ -43,6 +43,7 @@ Minimal shape — FKs + indexed columns + details JSON. One row per conversation
 | `cognitive_load_score` | REAL | NOT NULL | Per-turn cognitive load from `f_cognitive_load()` |
 | `cumulative_contradiction_count` | INTEGER | NOT NULL | Running total of oracle contradictions up to this turn |
 | `convergence_signal` | TEXT | NULL = still running | One of the `StopReason` values, or NULL if conversation continues |
+| `deleted_at` | TEXT | NULL = live row | ISO-8601 UTC timestamp; set by `deletion.cascade_delete()` when parent experiment is soft-deleted |
 | `details` | TEXT | JSON | Per-turn extras: `pairwise_accuracy`, `pairwise_sample_size`, `raw_deltas_count` |
 
 ### Deliberately omitted fields
@@ -84,8 +85,9 @@ Compound oracle messages produce multiple rows per turn (DB-03).
 
 **Soft-delete cascade (via `src/db/deletion.py`):**
 
-1. `deletion.cascade_delete(db, experiment_id)` sets `deleted_at` on the experiment row.
-2. It then sets `deleted_at` on all turns WHERE `experiment_id = ?` AND `deleted_at IS NULL`.
+1. `deletion.cascade_delete(db, experiment_id)` sets `deleted_at` on all turns
+   WHERE `experiment_id = ?` AND `deleted_at IS NULL`.
+2. It then sets `deleted_at` on the experiment row itself.
 3. `oracle_feedback` has no `deleted_at` column (minimal shape per D-05); child rows are
    excluded from live reads by filtering their parent turns (`WHERE deleted_at IS NULL`).
 

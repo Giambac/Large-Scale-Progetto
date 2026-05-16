@@ -68,9 +68,9 @@ def get(conn: sqlite3.Connection, turn_id: int) -> TurnRead | None:
 
 
 def query(conn: sqlite3.Connection, experiment_id: int) -> list[TurnRead]:
-    """Return all turns for an experiment ordered by turn_index. Returns []."""
+    """Return live (non-soft-deleted) turns for an experiment ordered by turn_index. Returns []."""
     rows = conn.execute(
-        "SELECT * FROM turns WHERE experiment_id = ? ORDER BY turn_index",
+        "SELECT * FROM turns WHERE experiment_id = ? AND deleted_at IS NULL ORDER BY turn_index",
         (experiment_id,),
     ).fetchall()
     return [_read(r) for r in rows]
