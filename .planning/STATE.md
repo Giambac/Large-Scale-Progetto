@@ -3,22 +3,22 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 5 — Ablation Harness and Strategies
-current_plan: 05-04 complete — N×M×K ablation harness + baseline dedup + cached embeddings
-status: executing
-stopped_at: "05-04-PLAN.md complete. Next: 05-05 (analysis/CI layer)."
-last_updated: "2026-05-17T00:00:00.000Z"
+current_plan: 05-05 complete — bootstrap CI analysis layer (compute_bootstrap_ci, CLI, notebook)
+status: phase-complete
+stopped_at: "Phase 5 complete. All 5 plans executed (05-01 through 05-05). Next: Phase 6 — Generalization and Human Validation."
+last_updated: "2026-05-17T00:20:00.000Z"
 progress:
   total_phases: 3
-  completed_phases: 1
-  total_plans: 11
-  completed_plans: 11
-  percent: 40
+  completed_phases: 2
+  total_plans: 12
+  completed_plans: 12
+  percent: 50
 ---
 
 # Project State: Conversational Clustering
 
 **Last updated:** 2026-05-17
-**Updated by:** 05-04-PLAN.md complete — N×M×K ablation harness (ALAB-02) with real OracleAgent, baseline dedup (W-01), cached embedding store (W-04)
+**Updated by:** 05-05-PLAN.md complete — bootstrap CI analysis layer (ALAB-03): compute_bootstrap_ci pure function, CLI compute_ci.py, notebooks/analysis.ipynb
 
 ---
 
@@ -34,17 +34,17 @@ progress:
 
 **Milestone:** v1
 **Current phase:** 5 — Ablation Harness and Strategies
-**Current plan:** 05-04 complete — N×M×K ablation harness + baseline dedup + cached embeddings
-**Status:** Executing
+**Current plan:** 05-05 complete — bootstrap CI analysis layer (compute_bootstrap_ci, CLI, notebook)
+**Status:** Phase 5 Complete
 
 **Progress:**
 
-[████████░░] 75%
+[█████████░] 83%
 Phase 1 [##########] 100% Pre-Code Obligations and Foundation ✓
 Phase 2 [##########] 100% Clustering Agent Core (v1 ✓, BACK-V2-01 ✓, VIZ-V2-01 ✓, UI-V2-01 ✓)
 Phase 3 [##########] 100% Oracle Agent (ORC-01 ✓, ORC-02 ✓, ORC-03 ✓, ORC-04 ✓, FB-04 ✓)
 Phase 4 [##########] 100% Judge Agent (DB layer ✓, f_eval ✓, PairBag ✓, run_baseline ✓, UI panels ✓)
-Phase 5 [████      ]  80% Ablation Harness and Strategies (05-01 ✓, 05-02 ✓, 05-03 ✓, 05-04 ✓)
+Phase 5 [##########] 100% Ablation Harness and Strategies (05-01 ✓, 05-02 ✓, 05-03 ✓, 05-04 ✓, 05-05 ✓)
 Phase 6 [          ]   0% Generalization and Human Validation
 
 ```
@@ -76,6 +76,8 @@ Phase 6 [          ]   0% Generalization and Human Validation
 | BIC GMM covariance type | full vs. diag covariance for 768-dim embeddings | **Resolved (Plan 06): diag + max_iter=50 for startup speed; acceptable for research tool** |
 | UMAP random_state for projection | Fixed random_state=42 ensures identical coords across runs on same dataset | **Resolved (Plan 07): random_state=42 in _compute_projection** |
 | AMBIGUOUS_P_MIN threshold | Items qualify as ambiguous for BoundaryDrivenStrategy when P(A) >= 0.3 AND P(B) >= 0.3 | **Resolved (05-03): 0.3 per CONTEXT.md threshold spec** |
+| Bootstrap CI oracle_type filter | --oracle-type filtered in Python post-query rather than adding SQL param to exp_db.query() | **Resolved (05-05): Python-side filter; adding to query() is Phase 6 concern** |
+| Bootstrap seed default | seed defaults to 0 for reproducibility; same code reruns produce identical CI | **Resolved (05-05): explicit seed=0 default per T-05-12 mitigation** |
 | MAX_SUBSET_SIZE cap | show_subset item_ids capped at 8 for cognitive-load reasons; sampled deterministically by state.turn_index | **Resolved (05-03): MAX_SUBSET_SIZE=8, random.Random(state.turn_index)** |
 | Projection recompute trigger | Expensive UMAP refit should not happen every turn | **Resolved (Plan 07): recompute only on SplitFeedback or MergeFeedback (D-22)** |
 | post_turn_callback hook design | How to wire per-turn side effects without coupling the loop to projection logic | **Resolved (Plan 07): Optional[Callable] parameter, default None, called after AuditLog write** |
@@ -123,8 +125,8 @@ None.
 
 ## Session Continuity
 
-**Last session:** 2026-05-17T00:30:00Z
-**Stopped at:** 05-04-PLAN.md complete. Next: 05-05 (analysis/CI layer).
+**Last session:** 2026-05-17T00:20:00Z
+**Stopped at:** 05-05-PLAN.md complete. Phase 5 fully done. Next: Phase 6 — Generalization and Human Validation.
 
 **Prior session:** 2026-05-16 — Phase 4 CONTEXT.md written (33 decisions, wazzup recipe aligned).
 
