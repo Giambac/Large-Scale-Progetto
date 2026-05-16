@@ -127,10 +127,10 @@
 4. Database writable and queryable for cross-run analysis
 5. Compound oracle feedback produces multiple rows in oracle_feedback table
 
-**Plans:** 6 plans
+**Plans:** 1/6 plans executed
 Plans:
 - [ ] 04-01-PLAN.md — DB foundation: src/db/ subpackage, schema init, Pydantic triples (DB-01/02/03)
-- [ ] 04-02-PLAN.md — Stopping criteria fill-in, src/logging_setup.py, OracleProtocol signature update (JUDG-01)
+- [x] 04-02-PLAN.md — Stopping criteria fill-in, src/logging_setup.py, OracleProtocol signature update (JUDG-01)
 - [ ] 04-03-PLAN.md — src/judge.py: PairBag, pairwise accuracy, turn metrics, run_baseline (JUDG-02/03)
 - [ ] 04-04-PLAN.md — Loop wiring: DB writes per turn, isinstance branch removal, state_update extension (DB-01/02/03 integration)
 - [ ] 04-05-PLAN.md — Tests: DB layer, judge, run_baseline, STRICT_MODE (all req IDs)

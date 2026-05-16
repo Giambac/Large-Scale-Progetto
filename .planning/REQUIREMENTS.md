@@ -33,7 +33,7 @@
 
 ### Judge Agent
 
-- [ ] **JUDG-01**: `f_eval` implements multi-signal convergence detection: oracle satisfaction signal + feedback magnitude decay + turn budget exhaustion
+- [x] **JUDG-01**: `f_eval` implements multi-signal convergence detection: oracle satisfaction signal + feedback magnitude decay + turn budget exhaustion
 - [ ] **JUDG-02**: Per-turn metric bundle is recorded to AuditLog: turns-to-convergence counter, cognitive-load score, contradiction count, pairwise validation accuracy sample
 - [ ] **JUDG-03**: No-dialogue baseline evaluation runs the same metric bundle on the un-conversed initial clustering, enabling isolation of dialogue contribution
 
@@ -137,7 +137,7 @@ These requirements activate when the team grows to 3–4 people or v1 is complet
 | DB-01 | Phase 4 | Pending |
 | DB-02 | Phase 4 | Pending |
 | DB-03 | Phase 4 | Pending |
-| JUDG-01 | Phase 4 | Pending |
+| JUDG-01 | Phase 4 | Complete |
 | JUDG-02 | Phase 4 | Pending |
 | JUDG-03 | Phase 4 | Pending |
 | ALAB-01 | Phase 5 | Pending |
