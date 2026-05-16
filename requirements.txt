@@ -24,3 +24,7 @@ openai>=1.30
 
 # Testing
 pytest>=8.0
+
+# DB layer (src/db/) and experiment config
+pydantic>=2.0
+pyyaml>=6.0
