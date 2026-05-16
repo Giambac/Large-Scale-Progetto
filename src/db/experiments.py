@@ -39,6 +39,7 @@ class ExperimentCreate(BaseModel):
     persona_id: str
     seed: int
     dataset: str
+    oracle_type: str = "llm"
     start_timestamp: str
     details: dict[str, Any] = Field(default_factory=dict)
     slug_override: str | None = None
@@ -55,6 +56,7 @@ class ExperimentRead(BaseModel):
     persona_id: str
     seed: int
     dataset: str
+    oracle_type: str
     total_turns: int | None
     convergence_reason: str | None
     start_timestamp: str
@@ -78,11 +80,11 @@ def create(conn: sqlite3.Connection, data: ExperimentCreate) -> ExperimentRead:
         """
         INSERT INTO experiments
             (name, slug, created_at, updated_at, strategy_id, persona_id, seed,
-             dataset, start_timestamp, details)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             dataset, oracle_type, start_timestamp, details)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (data.name, slug, now, now, data.strategy_id, data.persona_id, data.seed,
-         data.dataset, data.start_timestamp, details_json),
+         data.dataset, data.oracle_type, data.start_timestamp, details_json),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM experiments WHERE id = ?", (cursor.lastrowid,)).fetchone()
