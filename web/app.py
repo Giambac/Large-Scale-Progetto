@@ -1013,7 +1013,8 @@ def _detect_satisfaction(human_text: str, client: object) -> bool:
     Call claude-haiku-4-5 to detect satisfaction intent in human_text (D-12).
 
     Returns True if the message indicates satisfaction; False otherwise.
-    Only catches anthropic.APIError — all other exceptions propagate (fail loudly).
+    All exceptions propagate loudly (fail loudly per CLAUDE.md).
+    anthropic.APIError is re-raised so callers can handle study session errors.
     """
     import anthropic as _anthropic
     try:
@@ -1028,9 +1029,7 @@ def _detect_satisfaction(human_text: str, client: object) -> bool:
         )
         return response.content[0].text.strip().upper() == "YES"
     except _anthropic.APIError:
-        from src.logging_setup import deviation
-        deviation("satisfaction_detection_failed", human_text_len=len(human_text))
-        return False
+        raise  # re-raise per CLAUDE.md — API errors at the call boundary propagate loudly
 
 
 def _end_study_session(session_id: str, convergence_reason: str) -> None:
