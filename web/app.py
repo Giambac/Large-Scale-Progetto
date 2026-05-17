@@ -7,11 +7,14 @@ import datetime
 from datetime import timezone as _timezone
 import io
 import json as _json
+import logging
 import os
 import shutil
 import sys
 import threading
 import time
+
+log = logging.getLogger(__name__)
 
 # Ensure the project root is on sys.path so `src` is importable regardless
 # of which directory the server is launched from.
@@ -82,12 +85,12 @@ def _compute_projection(embeddings: "np.ndarray") -> "np.ndarray":
     from sklearn.decomposition import PCA
 
     N, dim = embeddings.shape
-    print(f"[timing] _compute_projection: input shape ({N}, {dim})")
+    log.debug("[timing] _compute_projection: input shape (%d, %d)", N, dim)
 
     t0 = time.perf_counter()
     pca = PCA(n_components=50, random_state=42)
     reduced = pca.fit_transform(embeddings)
-    print(f"[timing] PCA {dim}→50: {time.perf_counter() - t0:.2f}s")
+    log.debug("[timing] PCA %d→50: %.2fs", dim, time.perf_counter() - t0)
 
     t0 = time.perf_counter()
     reducer = umap_lib.UMAP(
@@ -98,7 +101,7 @@ def _compute_projection(embeddings: "np.ndarray") -> "np.ndarray":
         verbose=False,
     )
     coords = reducer.fit_transform(reduced)
-    print(f"[timing] UMAP 50→2 ({N} items): {time.perf_counter() - t0:.2f}s")
+    log.debug("[timing] UMAP 50→2 (%d items): %.2fs", N, time.perf_counter() - t0)
 
     assert coords.shape == (embeddings.shape[0], 2), (
         f"UMAP output shape {coords.shape} != ({embeddings.shape[0]}, 2)"
@@ -491,7 +494,7 @@ def _run_conversation_background(records: list[dict], log_path: str, backend_nam
         import numpy as _np
         _cached_shape = _np.load(_cached_path, mmap_mode="r").shape
         if _cached_shape[0] == len(texts):
-            print(f"[startup] Reusing cached embeddings from {_cached_path} (shape: {_cached_shape})")
+            log.info("[startup] Reusing cached embeddings from %s (shape: %s)", _cached_path, _cached_shape)
             shutil.copy2(_cached_path, _session_emb_path)
             store = EmbeddingStore.load(_session_emb_path)
         else:
@@ -519,7 +522,7 @@ def _run_conversation_background(records: list[dict], log_path: str, backend_nam
     initial_state = build_initial_clustering_state(
         store.get_all(), records, namer, backend=backend
     )
-    print(f"[timing] build_initial_clustering_state: {time.perf_counter() - t0:.2f}s")
+    log.debug("[timing] build_initial_clustering_state: %.2fs", time.perf_counter() - t0)
     _session["progress"] = {"stage": "clustering", "pct": 100, "msg": "Clustering complete"}
     emitter.emit("progress_update", _session["progress"])
     _session["state"] = initial_state
@@ -530,7 +533,7 @@ def _run_conversation_background(records: list[dict], log_path: str, backend_nam
     if session_name:
         with open(os.path.join(session_dir, "name.txt"), "w", encoding="utf-8") as _f:
             _f.write(session_name)
-        print(f"[session] Name: {session_name}")
+        log.info("[session] Name: %s", session_name)
 
     # D-17: log chosen K to session-scoped audit_log.jsonl as backend_init event so runs are reproducible
     if backend_name == "kmeans":
@@ -543,7 +546,7 @@ def _run_conversation_background(records: list[dict], log_path: str, backend_nam
         }
         with open(session_log_path, "a", encoding="utf-8") as _f:
             _f.write(_json.dumps(_backend_init_event) + "\n")
-        print(f"[startup] KMeansBackend: K={_k_chosen} (selected via BIC on GMM)")
+        log.info("[startup] KMeansBackend: K=%d (selected via BIC on GMM)", _k_chosen)
     else:
         _backend_init_event = {
             "event": "backend_init",
@@ -553,7 +556,7 @@ def _run_conversation_background(records: list[dict], log_path: str, backend_nam
         }
         with open(session_log_path, "a", encoding="utf-8") as _f:
             _f.write(_json.dumps(_backend_init_event) + "\n")
-        print(f"[startup] HDBSCANBackend: K={len(initial_state.clusters)} clusters discovered")
+        log.info("[startup] HDBSCANBackend: K=%d clusters discovered", len(initial_state.clusters))
 
     # Write initial state snapshot (D-27)
     _write_session_state(initial_state, session_dir)
@@ -667,7 +670,7 @@ def _detect_text_field(records: list[dict]) -> str:
             best_key = key
 
     assert best_key is not None, f"No string field found. Available fields: {list(records[0].keys())}"
-    print(f"[parse] Auto-detected text field: '{best_key}' (avg length: {best_avg:.0f} chars)")
+    log.info("[parse] Auto-detected text field: %r (avg length: %.0f chars)", best_key, best_avg)
     return best_key
 
 def _parse_upload(content: str, filename: str) -> list[dict]:
