@@ -930,6 +930,9 @@ def _run_study_background(session_id: str) -> None:
 
         if sess["ended"]:
             return
+        if not sess["feedback_queue"]:
+            # Spurious wake (ended flag raced) — treat as session end
+            return
 
         human_text = sess["feedback_queue"].pop(0)
 
@@ -947,6 +950,9 @@ def _run_study_background(session_id: str) -> None:
             sess["feedback_event"].clear()
 
             if sess["ended"]:
+                return
+            if not sess["feedback_queue"]:
+                # Spurious wake (ended flag raced) — treat as session end
                 return
 
             confirm_text = sess["feedback_queue"].pop(0)
