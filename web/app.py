@@ -35,10 +35,15 @@ SESSIONS_DIR = "sessions"
 def _make_session_timestamp() -> str:
     """
     Generate a filesystem-safe session timestamp string (D-26).
-    Uses hyphens instead of colons: "2026-05-08T14-32-00"
+    Uses hyphens instead of colons: "2026-05-08T14-32-00-a1b2c3d4"
     (colons are forbidden in Windows paths and inconvenient on POSIX too).
+    Always UTC per CLAUDE.md. Appends a random hex suffix to prevent
+    same-second collisions (two sessions started within the same second would
+    otherwise produce identical session_ids, causing silent state overwrite).
     """
-    return datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    import secrets
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+    return f"{ts}-{secrets.token_hex(4)}"
 
 
 def _write_session_state(state: "ClusteringState", session_dir: str) -> None:
