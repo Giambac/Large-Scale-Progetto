@@ -411,37 +411,32 @@ async def upload_dataset(file: UploadFile = File(...), backend: str = Form("hdbs
 # ── Background task ───────────────────────────────────────────────────────────
 def _generate_session_name(namer: object, cluster_names: list[str]) -> str:
     """Generate a short human-readable session name from cluster names using the LLM."""
-    import re, time
-    try:
-        clusters_str = ", ".join(cluster_names[:8])
-        prompt = (
-            f"Given these cluster names from a dataset: {clusters_str}\n\n"
-            "Generate a very short session title (3-6 words) that captures the main theme. "
-            "Respond with ONLY the title, no punctuation, no quotes."
+    clusters_str = ", ".join(cluster_names[:8])
+    prompt = (
+        f"Given these cluster names from a dataset: {clusters_str}\n\n"
+        "Generate a very short session title (3-6 words) that captures the main theme. "
+        "Respond with ONLY the title, no punctuation, no quotes."
+    )
+    if hasattr(namer, '_client') and hasattr(namer._client, 'messages'):
+        # Anthropic
+        response = namer._client.messages.create(
+            model="claude-haiku-4-5", max_tokens=32,
+            messages=[{"role": "user", "content": prompt}],
         )
-        if hasattr(namer, '_client') and hasattr(namer._client, 'messages'):
-            # Anthropic
-            response = namer._client.messages.create(
-                model="claude-haiku-4-5", max_tokens=32,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return response.content[0].text.strip()
-        elif hasattr(namer, '_client') and hasattr(namer._client, 'chat'):
-            # OpenAI/Groq
-            response = namer._client.chat.completions.create(
-                model=namer._model, max_completion_tokens=32,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return response.choices[0].message.content.strip()
-        else:
-            # Google
-            response = namer._client.models.generate_content(
-                model=namer._model, contents=prompt
-            )
-            return response.text.strip()
-    except Exception as e:
-        print(f"[session_name] Failed: {e}")
-        return ""
+        return response.content[0].text.strip()
+    elif hasattr(namer, '_client') and hasattr(namer._client, 'chat'):
+        # OpenAI/Groq
+        response = namer._client.chat.completions.create(
+            model=namer._model, max_completion_tokens=32,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.choices[0].message.content.strip()
+    else:
+        # Google
+        response = namer._client.models.generate_content(
+            model=namer._model, contents=prompt
+        )
+        return response.text.strip()
 
 def _run_conversation_background(records: list[dict], log_path: str, backend_name: str = "hdbscan") -> None:
     """
