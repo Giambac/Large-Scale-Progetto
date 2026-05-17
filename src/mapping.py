@@ -360,8 +360,8 @@ class CentroidMappingStrategy:
         best_cluster_id: str = centroids[0][0]
         best_sim: float = -2.0  # sentinel below any valid cosine value
 
+        norm_item = np.linalg.norm(item_vec)  # computed once before the loop
         for cluster_id_str, centroid in centroids:
-            norm_item = np.linalg.norm(item_vec)
             norm_centroid = np.linalg.norm(centroid)
             cosine_sim = float(
                 np.dot(item_vec, centroid) / (norm_item * norm_centroid + 1e-10)
