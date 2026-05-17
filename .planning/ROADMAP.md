@@ -192,6 +192,14 @@ Plans:
 3. LLM-vs-human gap quantified with CI on at least one headline metric
 4. Honest discussion of what the oracle signal can and cannot tell us
 
+**Plans:** 5 plans
+Plans:
+- [ ] 06-01-PLAN.md — src/mapping.py: OracleRuleSet, MappingProtocol, LLM + Centroid strategies (GEN-01)
+- [ ] 06-02-PLAN.md — examples/evaluate_mapping.py: held-out evaluation, both strategies, bootstrap CI (GEN-02)
+- [ ] 06-03-PLAN.md — Human study UI: /study route, study.html, satisfaction detection, DB writes (EXP-V2-01)
+- [ ] 06-04-PLAN.md — tests/test_mapping.py + tests/test_study_ui.py (GEN-01, GEN-02, EXP-V2-01)
+- [ ] 06-05-PLAN.md — LLM-vs-human analysis: examples/compare_oracle_types.py + notebooks/llm_vs_human.ipynb (EXP-V2-01)
+
 ---
 
 ## Progress Table

@@ -150,6 +150,7 @@ Requirements in scope: **GEN-01, GEN-02, EXP-V2-01 (complete)**.
 - **Soft-assignment calibration (EVAL-V2-01)** — reliability diagram. Not in Phase 6 scope.
 - **Ensemble MappingStrategy** — `MappingProtocol` is designed to support it; implementation deferred until Phase 6 results show whether combining strategies adds value.
 - **Human GEN-02 labeling** — participants label held-out items for a human-oracle accuracy comparison. Deferred; GEN-02 uses LLM oracle only for Phase 6.
+- **Within-subject counterbalancing / randomized task order** — EXP-V2-01 spec mentions "within-subject design, randomized task order." For this study, all participants use the same dataset and same initial clustering (D-11), making task-order randomization a researcher-managed operation (e.g., counterbalancing spreadsheet), not a software deliverable. The controlled between-subject design satisfies the research intent of EXP-V2-01. No code changes needed.
 
 </deferred>
 
