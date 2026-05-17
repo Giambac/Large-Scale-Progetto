@@ -125,12 +125,12 @@ None.
 
 ## Session Continuity
 
-**Last session:** 2026-05-17T00:20:00Z
-**Stopped at:** 05-05-PLAN.md complete. Phase 5 fully done. Next: Phase 6 — Generalization and Human Validation.
+**Last session:** 2026-05-17
+**Stopped at:** Phase 6 context gathered — mapping function (pluggable MappingProtocol, LLM + centroid strategies, OracleRuleSet Pydantic), study UI (/study route, faceted UMAP, linked item lists), oracle satisfaction for humans (LLM parser + 30-turn cap + confirm prompt), GEN-02 (LLM oracle as ground-truth labeler). Ready for planning.
 
-**Prior session:** 2026-05-16 — Phase 4 CONTEXT.md written (33 decisions, wazzup recipe aligned).
+**Prior session:** 2026-05-17T00:20:00Z — Phase 5 fully done. All 5 plans executed.
 
-**To resume:** Run `/clear` then `/gsd-execute-phase 4`.
+**To resume:** Run `/clear` then `/gsd-plan-phase 6`.
 
 **New canonical reference for Phase 4:** wazzup "how to build simple applications" recipe (user-provided this session). Planner should ask user to commit the recipe markdown somewhere stable (e.g. `private/recipes/`) before execute begins — the recipe is the source of design discipline for the DB layer shape and docs discipline.
 
