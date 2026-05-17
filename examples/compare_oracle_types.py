@@ -54,11 +54,10 @@ def main() -> None:
 
     # Lazy imports — keep --help fast (D-25 pattern)
     from src.db import experiments as exp_db
-    from src.db.connection import connect, init_schema
+    from src.db.connection import connect
     from src.analysis import compute_bootstrap_ci
 
     db = connect()
-    init_schema(db)
     try:
         rows = exp_db.query(db, dataset=args.dataset)
     finally:
