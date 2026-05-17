@@ -104,7 +104,6 @@ def test_mapping_registry_keys():
 
 def test_mapping_protocol_isinstance():
     """Both strategies satisfy MappingProtocol (structural/runtime_checkable)."""
-    rule_set = _make_rule_set()
     assert isinstance(LLMMappingStrategy(), MappingProtocol)
     assert isinstance(CentroidMappingStrategy(), MappingProtocol)
 
