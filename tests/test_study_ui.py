@@ -134,10 +134,9 @@ def test_study_max_turns_env_default(monkeypatch):
 
 
 def test_study_max_turns_env_override(monkeypatch):
-    """
-    The STUDY_MAX_TURNS parsing expression int(os.environ.get("STUDY_MAX_TURNS", "30"))
-    correctly converts the env var string to int.
-    """
+    """STUDY_MAX_TURNS reflects the env var when web.app is re-imported."""
     monkeypatch.setenv("STUDY_MAX_TURNS", "5")
-    result = int(os.environ.get("STUDY_MAX_TURNS", "30"))
-    assert result == 5
+    import importlib
+    import web.app as app_module
+    importlib.reload(app_module)
+    assert app_module.STUDY_MAX_TURNS == 5
