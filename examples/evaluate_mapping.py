@@ -175,7 +175,16 @@ def main() -> None:
                 prediction = strategy.assign(item_text, state, rule_set, embedding_store)
             except anthropic.APIError:
                 raise
-            agreement = 1.0 if int(prediction) == oracle_label else 0.0
+            try:
+                pred_int = int(prediction)
+            except ValueError:
+                deviation(
+                    "mapping_strategy_invalid_prediction",
+                    prediction=prediction,
+                    strategy=name,
+                )
+                continue  # skip item rather than crash
+            agreement = 1.0 if pred_int == oracle_label else 0.0
             agreement_values.append(agreement)
 
         n = len(agreement_values)
