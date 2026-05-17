@@ -960,7 +960,11 @@ def _run_study_background(session_id: str) -> None:
                 _end_study_session(session_id, "oracle_satisfied")
                 return
             else:
-                # Participant said no — resume loop; re-emit current state
+                # Participant said no — resume loop; re-emit current state.
+                # Count this oracle round-trip against the turn budget so
+                # turn_index stays in sync with actual interactions consumed.
+                turn_index += 1
+                sess["turn_index"] = turn_index
                 emitter.emit("study_state", _build_study_state_payload(current_state))
                 continue
 
