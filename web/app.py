@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime
+from datetime import timezone as _timezone
 import io
 import json as _json
 import os
@@ -198,6 +199,10 @@ def _parse_args() -> argparse.Namespace:
 
 _args = _parse_args()
 _backend_name: str = _args.backend
+
+# ── Human study session constants (EXP-V2-01, D-13) ─────────────────────────
+STUDY_MAX_TURNS: int = int(os.environ.get("STUDY_MAX_TURNS", "30"))
+_study_sessions: dict = {}  # session_id -> study session state dict
 
 # ── Module-level session state (single session per server run, D-15) ─────────
 # Cleared on each POST /upload so the old session is discarded.
@@ -691,6 +696,382 @@ def _parse_upload(content: str, filename: str) -> list[dict]:
         for i, r in enumerate(records_raw)
         if r.get(text_field, "").strip()
     ]
+
+# ── Human Study Routes (EXP-V2-01) ───────────────────────────────────────────
+
+@app.post("/study/sessions")
+async def create_study_session(request: Request):
+    """
+    POST /study/sessions — create a new human study session.
+
+    Request body JSON: {"dataset_path": str, "backend": str}
+    Returns: {"session_id": str, "study_url": str}
+    """
+    from pydantic import BaseModel as _BaseModel
+
+    class _StudySessionCreate(_BaseModel):
+        dataset_path: str
+        backend: str = "hdbscan"
+
+    body = await request.json()
+    params = _StudySessionCreate(**body)
+
+    if not os.path.exists(params.dataset_path):
+        raise HTTPException(status_code=400, detail=f"dataset_path does not exist: {params.dataset_path!r}")
+    if params.backend not in ("hdbscan", "kmeans"):
+        raise HTTPException(status_code=400, detail=f"Invalid backend: {params.backend!r}. Must be 'hdbscan' or 'kmeans'.")
+
+    # Load records from dataset_path (same logic as _parse_upload for JSONL)
+    with open(params.dataset_path, "r", encoding="utf-8") as _f:
+        content = _f.read()
+    records = _parse_upload(content, params.dataset_path)
+    if len(records) < 2:
+        raise HTTPException(status_code=400, detail=f"Dataset too small: {len(records)} records (need >= 2)")
+
+    # Create unique session_id using the same timestamp helper
+    session_id = _make_session_timestamp()
+    session_dir = os.path.join(SESSIONS_DIR, f"study-{session_id}")
+
+    # Open DB connection for this study session (one per run, D-04)
+    from src.db.connection import connect as _db_connect, init_schema as _db_init_schema
+    from src.db.experiments import ExperimentCreate as _ExperimentCreate, create as _exp_create
+    db = _db_connect()
+    _db_init_schema(db)
+
+    _exp_start_ts = datetime.datetime.now(_timezone.utc).isoformat()
+    exp = _exp_create(db, _ExperimentCreate(
+        name=f"human-study-{session_id}",
+        strategy_id="human_study",
+        persona_id="human",
+        seed=0,
+        dataset=params.dataset_path,
+        oracle_type="human",
+        start_timestamp=_exp_start_ts,
+        details={"study_session_id": session_id},
+    ))
+
+    # Initialise study session state dict
+    _study_sessions[session_id] = {
+        "records": records,
+        "backend": params.backend,
+        "session_dir": session_dir,
+        "db": db,
+        "exp_id": exp.id,
+        "feedback_event": threading.Event(),
+        "feedback_queue": [],
+        "turn_index": 0,
+        "state": None,
+        "store": None,
+        "coords": None,
+        "ended": False,
+    }
+
+    # Launch background worker thread
+    t = threading.Thread(
+        target=_run_study_background,
+        args=(session_id,),
+        daemon=True,
+    )
+    t.start()
+
+    return {"session_id": session_id, "study_url": f"/study/{session_id}"}
+
+
+@app.get("/study/{session_id}")
+async def study_session_page(session_id: str, request: Request):
+    """GET /study/{session_id} — serve the study HTML page."""
+    if session_id not in _study_sessions:
+        # Also accept if the study session directory exists on disk (resumed case)
+        session_dir = os.path.join(SESSIONS_DIR, f"study-{session_id}")
+        if not os.path.isdir(session_dir):
+            raise HTTPException(status_code=404, detail=f"Study session not found: {session_id!r}")
+    return templates.TemplateResponse(request=request, name="study.html", context={"session_id": session_id})
+
+
+# ── Study background worker ───────────────────────────────────────────────────
+
+def _run_study_background(session_id: str) -> None:
+    """
+    Worker thread for a human study session.
+
+    Runs initial clustering, emits projection + state to the browser, then
+    enters the feedback loop — awaiting human input via SocketIO study_feedback events.
+    """
+    import numpy as np
+
+    from src.cluster_naming import AnthropicClusterNamer
+    from src.clustering import HDBSCANBackend, KMeansBackend, build_initial_clustering_state
+    from src.embedding_store import EmbeddingStore
+    from src.llm_key import resolve_llm_key
+    from src.serialization import append_to_audit_log
+
+    sess = _study_sessions[session_id]
+    records = sess["records"]
+    backend_name = sess["backend"]
+    session_dir = sess["session_dir"]
+    db = sess["db"]
+    exp_id = sess["exp_id"]
+
+    os.makedirs(session_dir, exist_ok=True)
+    session_log_path = os.path.join(session_dir, "audit_log.jsonl")
+
+    # Resolve LLM key for naming and satisfaction detection
+    provider, api_key = resolve_llm_key()
+    assert provider == "anthropic", (
+        f"Study session requires Anthropic API key; got provider={provider!r}. "
+        "Set ANTHROPIC_API_KEY in the environment."
+    )
+    import anthropic as _anthropic
+    _client = _anthropic.Anthropic(api_key=api_key)
+    namer = AnthropicClusterNamer(_client)
+
+    # Load or compute embeddings (reuse cached if same size)
+    texts = [r["text"] for r in records]
+    os.makedirs("embeddings", exist_ok=True)
+    _cached_path = "embeddings/embeddings.npy"
+    _session_emb_path = f"embeddings/study_{session_id}_embeddings.npy"
+    if os.path.exists(_cached_path):
+        _cached_shape = np.load(_cached_path, mmap_mode="r").shape
+        if _cached_shape[0] == len(texts):
+            shutil.copy2(_cached_path, _session_emb_path)
+            store = EmbeddingStore.load(_session_emb_path)
+        else:
+            store = EmbeddingStore.compute_and_save(texts, _session_emb_path)
+    else:
+        store = EmbeddingStore.compute_and_save(texts, _session_emb_path)
+
+    # Copy embeddings to session dir
+    session_embeddings_path = os.path.join(session_dir, "embeddings.npy")
+    shutil.copy2(_session_emb_path, session_embeddings_path)
+
+    # Build backend and initial clustering state
+    if backend_name == "kmeans":
+        backend = KMeansBackend()
+    else:
+        backend = HDBSCANBackend()
+
+    state = build_initial_clustering_state(store.get_all(), records, namer, backend=backend)
+    _write_session_state(state, session_dir)
+    sess["state"] = state
+    sess["store"] = store
+
+    # Compute UMAP projection and store coords
+    coords = _compute_projection(store.get_all())
+    sess["coords"] = coords
+
+    # Build sorted cluster_id -> color mapping (stable)
+    sorted_cluster_ids = sorted({c.id for c in state.clusters})
+    cluster_colors = {
+        str(cid): _CLUSTER_COLORS[idx % len(_CLUSTER_COLORS)]
+        for idx, cid in enumerate(sorted_cluster_ids)
+    }
+
+    # Build global coordinate bounds for faceted mini-plots
+    x_min = float(coords[:, 0].min())
+    x_max = float(coords[:, 0].max())
+    y_min = float(coords[:, 1].min())
+    y_max = float(coords[:, 1].max())
+
+    # Build per-cluster item_ids mapping
+    per_cluster = {
+        str(c.id): {"item_ids": c.item_ids, "name": c.name, "description": c.description}
+        for c in state.clusters
+    }
+
+    # Emit study_projection with faceted payload
+    emitter.emit("study_projection", {
+        "coords": coords.tolist(),
+        "cluster_colors": cluster_colors,
+        "global_bounds": {"x_min": x_min, "x_max": x_max, "y_min": y_min, "y_max": y_max},
+        "per_cluster": per_cluster,
+    })
+
+    # Emit initial study_state
+    def _build_study_state_payload(st):
+        """Build the study_state SocketIO payload from a ClusteringState."""
+        return {
+            "clusters": [
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "description": c.description,
+                    "sample_items": [
+                        {"item_id": iid, "text_preview": _get_item_preview(iid, records)}
+                        for iid in c.item_ids[:8]
+                    ],
+                }
+                for c in st.clusters
+            ]
+        }
+
+    emitter.emit("study_state", _build_study_state_payload(state))
+
+    # ── Main feedback loop ────────────────────────────────────────────────────
+    from src.agent_functions import f_next_state
+    from src.feedback_parser import parse_feedback
+    from src.hierarchy import HierarchyStore
+
+    hierarchy = HierarchyStore()
+    for cluster in state.clusters:
+        hierarchy.register(cluster.id)
+
+    id_to_text = {r["item_id"]: r["text"] for r in records}
+
+    turn_index = 0
+    current_state = state
+
+    while turn_index < STUDY_MAX_TURNS:
+        # Signal that we are awaiting feedback from the participant
+        emitter.emit("study_awaiting_feedback", {})
+
+        # Block until the participant sends a message (threading.Event)
+        sess["feedback_event"].wait()
+        sess["feedback_event"].clear()
+
+        if sess["ended"]:
+            return
+
+        human_text = sess["feedback_queue"].pop(0)
+
+        # ── Satisfaction detection (D-12) ────────────────────────────────────
+        satisfied = _detect_satisfaction(human_text, _client)
+
+        if satisfied:
+            # Emit satisfaction banner and wait for confirmation
+            emitter.emit("study_satisfaction_detected", {
+                "message": "It looks like you're satisfied with the clustering. End session? Reply 'yes' to end."
+            })
+
+            # Wait for confirmation feedback
+            sess["feedback_event"].wait()
+            sess["feedback_event"].clear()
+
+            if sess["ended"]:
+                return
+
+            confirm_text = sess["feedback_queue"].pop(0)
+            if confirm_text.strip().lower() in ("yes", "y", "yeah", "yep"):
+                _end_study_session(session_id, "oracle_satisfied")
+                return
+            else:
+                # Participant said no — resume loop; re-emit current state
+                emitter.emit("study_state", _build_study_state_payload(current_state))
+                continue
+
+        # ── Parse and apply feedback ─────────────────────────────────────────
+        deltas = parse_feedback(human_text, current_state, _client)
+
+        new_state = f_next_state(
+            current_state, deltas, store, namer, hierarchy, id_to_text, []
+        )
+
+        # Write state.json and audit log
+        _write_session_state(new_state, session_dir)
+        append_to_audit_log(new_state, session_log_path)
+
+        # DB: insert turn row
+        from src.db import turns as _turns_db
+        from src.db.turns import TurnCreate as _TurnCreate
+        _turns_db.create(db, _TurnCreate(
+            experiment_id=exp_id,
+            turn_index=new_state.turn_index,
+            action_type="human_feedback",
+            cognitive_load_score=0.0,
+            cumulative_contradiction_count=0,
+            convergence_signal=None,
+            details={"human_text": human_text},
+        ))
+
+        turn_index += 1
+        sess["turn_index"] = turn_index
+        current_state = new_state
+        sess["state"] = current_state
+
+        # Emit updated study_state
+        emitter.emit("study_state", _build_study_state_payload(current_state))
+
+    # Turn budget exhausted
+    _end_study_session(session_id, "turn_budget")
+
+
+def _get_item_preview(item_id: int, records: list[dict]) -> str:
+    """Return the first 80 chars of item text for the given item_id."""
+    for r in records:
+        if r["item_id"] == item_id:
+            return r["text"][:80]
+    return f"item {item_id}"
+
+
+def _detect_satisfaction(human_text: str, client: object) -> bool:
+    """
+    Call claude-haiku-4-5 to detect satisfaction intent in human_text (D-12).
+
+    Returns True if the message indicates satisfaction; False otherwise.
+    Only catches anthropic.APIError — all other exceptions propagate (fail loudly).
+    """
+    import anthropic as _anthropic
+    try:
+        prompt = (
+            f"Does this message indicate the user is satisfied with the clustering? "
+            f"Reply YES or NO only. Message: {human_text}"
+        )
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=4,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text.strip().upper() == "YES"
+    except _anthropic.APIError:
+        from src.logging_setup import deviation
+        deviation("satisfaction_detection_failed", human_text_len=len(human_text))
+        return False
+
+
+def _end_study_session(session_id: str, convergence_reason: str) -> None:
+    """
+    Finalize a study session: update DB experiment row, close DB, emit study_ended.
+    """
+    from src.db.experiments import ExperimentUpdate as _ExperimentUpdate, update as _exp_update
+
+    sess = _study_sessions.get(session_id)
+    if sess is None:
+        return
+
+    db = sess["db"]
+    exp_id = sess["exp_id"]
+    end_ts = datetime.datetime.now(_timezone.utc).isoformat()
+
+    _exp_update(db, exp_id, _ExperimentUpdate(
+        total_turns=sess["turn_index"],
+        convergence_reason=convergence_reason,
+        end_timestamp=end_ts,
+    ))
+    db.close()
+
+    sess["ended"] = True
+    # Wake the worker thread if it is blocked waiting for feedback
+    sess["feedback_event"].set()
+
+    emitter.emit("study_ended", {"convergence_reason": convergence_reason})
+
+
+# ── SocketIO event handler: study_feedback ────────────────────────────────────
+
+@sio.event
+async def study_feedback(sid, data):
+    """
+    Receives participant feedback from the browser (SocketIO event).
+    data = {"session_id": str, "text": str}
+    """
+    assert "session_id" in data, f"study_feedback missing 'session_id': {data!r}"
+    assert "text" in data, f"study_feedback missing 'text': {data!r}"
+
+    session_id = data["session_id"]
+    assert session_id in _study_sessions, f"Unknown study session: {session_id!r}"
+
+    _study_sessions[session_id]["feedback_queue"].append(data["text"])
+    _study_sessions[session_id]["feedback_event"].set()
+
 
 # ── SocketIO connect handler ──────────────────────────────────────────────────
 
