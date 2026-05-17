@@ -1,82 +1,47 @@
 {
   "version": "1.0",
-  "timestamp": "2026-05-16T22:34:32.859Z",
-  "phase": "05",
-  "phase_name": "ablation-harness-and-strategies",
+  "timestamp": "2026-05-17T00:00:00Z",
+  "phase": "5",
+  "phase_name": "Ablation Harness and Strategies",
   "phase_dir": ".planning/phases/05-ablation-harness-and-strategies",
-  "plan": null,
-  "task": null,
-  "total_tasks": 13,
-  "status": "paused",
-  "stage": "planned",
+  "plan": 5,
+  "task": 0,
+  "total_tasks": 0,
+  "status": "phase-complete",
   "completed_tasks": [
-    {"id": "context", "name": "discuss-phase 5 — CONTEXT.md written (16 decisions D-01..D-16)", "status": "done", "commit": "e9f2df2"},
-    {"id": "pattern-mapping", "name": "Pattern mapper produced 05-PATTERNS.md (12 files, 11 analogs)", "status": "done", "commit": "afdece6"},
-    {"id": "plan-01", "name": "Plan 05-01: oracle_type DB column (DDL + Pydantic + MODEL.md) — Wave 1", "status": "done", "commit": "afdece6"},
-    {"id": "plan-02", "name": "Plan 05-02: _format_message() enrichment with id_to_text — Wave 1", "status": "done", "commit": "afdece6"},
-    {"id": "plan-03", "name": "Plan 05-03: UncertaintyDrivenStrategy + BoundaryDrivenStrategy — Wave 2", "status": "done", "commit": "afdece6"},
-    {"id": "plan-04", "name": "Plan 05-04: N×M×K harness with real OracleAgent + baseline dedup — Wave 3", "status": "done", "commit": "afdece6"},
-    {"id": "plan-05", "name": "Plan 05-05: Bootstrap CI analysis layer (src/analysis.py + compute_ci.py + notebook) — Wave 4", "status": "done", "commit": "afdece6"},
-    {"id": "verify-plans", "name": "Plan-checker passed after 1 revision (2 blockers + 4 warnings resolved)", "status": "done", "commit": "afdece6"}
+    {"id": "05-01", "name": "oracle_type DB column (DDL + Pydantic + MODEL.md)", "status": "done", "commit": "33ef904"},
+    {"id": "05-02", "name": "_format_message enrichment with id_to_text (W-02 fix)", "status": "done", "commit": "42fb2a5"},
+    {"id": "05-03", "name": "UncertaintyDrivenStrategy + BoundaryDrivenStrategy", "status": "done", "commit": "e363411"},
+    {"id": "05-04", "name": "N×M×K harness with real OracleAgent + baseline dedup", "status": "done", "commit": "d1e38e1"},
+    {"id": "05-05", "name": "Bootstrap CI: src/analysis.py + compute_ci.py + notebook", "status": "done", "commit": "5ec12b5"},
+    {"id": "05-uat", "name": "UAT 8/8 passed", "status": "done", "commit": "a6cc84b"}
   ],
-  "remaining_tasks": [
-    {"id": "execute-wave-1", "name": "Execute Wave 1: 05-01 (DDL) + 05-02 (_format_message) — parallelizable", "status": "not_started"},
-    {"id": "execute-wave-2", "name": "Execute Wave 2: 05-03 (new strategies)", "status": "not_started"},
-    {"id": "execute-wave-3", "name": "Execute Wave 3: 05-04 (harness — depends on 05-01 and 05-03)", "status": "not_started"},
-    {"id": "execute-wave-4", "name": "Execute Wave 4: 05-05 (bootstrap CI — depends on 05-01 and 05-04)", "status": "not_started"},
-    {"id": "verify-phase", "name": "/gsd-verify-work 5 — confirm 3 strategies + CI on turns-to-convergence", "status": "not_started"}
-  ],
+  "remaining_tasks": [],
   "blockers": [],
   "human_actions_pending": [
     {
-      "action": "Ensure ANTHROPIC_API_KEY is set before running the harness",
-      "context": "Plan 05-04 wires a real OracleAgent (B-02 fix). Production path requires a valid Anthropic API key. HARNESS_DRY_RUN=1 env flag swaps in MockOracle for smoke tests, but real ablation requires live LLM calls.",
+      "action": "Set ANTHROPIC_API_KEY before running the real harness",
+      "context": "src/harness.py calls anthropic.Anthropic(api_key=...) via resolve_llm_key(). HARNESS_DRY_RUN=1 available for smoke tests only.",
       "blocking": false
     },
     {
-      "action": "Confirm max_workers default in experiments/configs/harness.yaml suits Anthropic tier",
-      "context": "Plan 05-04 creates harness.yaml with default max_workers (likely 4). 27 default runs at 4 concurrent workers means 4 simultaneous LLM conversations. Adjust if your rate-limit tier is tighter or looser.",
+      "action": "Delete stale experiments.db at repo root if it predates Phase 5",
+      "context": "Pre-Phase-5 DB lacks oracle_type column. CREATE TABLE IF NOT EXISTS silently skips new DDL. Surfaced and resolved during UAT. Always start fresh.",
       "blocking": false
     }
   ],
   "decisions": [
-    {
-      "decision": "Skipped RESEARCH.md / Nyquist Validation Architecture",
-      "rationale": "Invoked /gsd-plan-phase 5 --skip-research. CONTEXT.md already locked all 16 implementation decisions (D-01..D-16) and CANONICAL refs cover reusable assets. No new domain knowledge needed.",
-      "phase": "05"
-    },
-    {
-      "decision": "Wave structure: {01,02} → {03} → {04} → {05} (4 waves, not 3)",
-      "rationale": "Round-1 plan-checker B-01: Plan 04 imports new strategy classes from src/strategy.py at module top. Had 03 and 04 both been Wave 2, parallel execution would race and fail at import. Promoted Plan 04 to Wave 3 (depends_on [05-01, 05-03]) and Plan 05 to Wave 4.",
-      "phase": "05"
-    },
-    {
-      "decision": "Harness _run_one uses real OracleAgent + Anthropic client (NOT a MockOracle stub)",
-      "rationale": "Round-1 plan-checker B-02: original plan stubbed _run_one with MockOracle(satisfied=True), making every strategy converge in 1 turn → zero between-strategy variance → bootstrap CI in Plan 05 cannot distinguish strategies → phase goal unachievable. Revised: real OracleAgent by default, MockOracle only under HARNESS_DRY_RUN=1.",
-      "phase": "05"
-    },
-    {
-      "decision": "_format_message: empty payload is NOT a deviation",
-      "rationale": "Round-1 W-02: original plan called deviation() on every empty-payload show_subset/ask_question. RandomStrategy emits empty payloads by design (Phase 2 baseline contract), so under STRICT_MODE=1 the entire 'random' column of the ablation matrix would abort. Revised: deviation() retained ONLY for genuinely unexpected branches (unknown cluster_id, missing item_id in id_to_text).",
-      "phase": "05"
-    },
-    {
-      "decision": "Harness invokes run_baseline once per unique (persona, seed) — deduplicated across strategies",
-      "rationale": "Round-1 W-01: original plan declared a key_link to run_baseline (D-10) but never invoked it. Without baseline rows the 'no_dialogue (baseline)' row of the D-14 output table would be empty. Revised: baseline_keys = sorted({(c.persona_id, c.seed) for c in combos}) → one baseline future per unique pair.",
-      "phase": "05"
-    },
-    {
-      "decision": "Embedding store computed once in harness orchestrator (not per thread)",
-      "rationale": "Round-1 W-04: original plan called EmbeddingStore.compute_and_save inside _run_one, causing up to 27 redundant embedding passes under 4 workers. Revised: _build_embedding_store(records) called once in run_harness; passed read-only to every _run_one call.",
-      "phase": "05"
-    },
-    {
-      "decision": "Verify commands rewritten as portable python -c / subprocess one-liners",
-      "rationale": "Round-1 W-03: Bash-only pipelines (grep | awk | && | >NUL) do not run on PowerShell (documented env shell on Windows 11). Plans 04 and 05 now use python -c invariant checks. Plans 01 and 03 still contain some grep -q calls but checker considered those out of scope for this fix.",
-      "phase": "05"
-    }
+    {"decision": "B-02: production harness uses real OracleAgent + Anthropic client", "rationale": "MockOracle 1-turn convergence produces zero between-strategy variance", "phase": "5"},
+    {"decision": "W-01: run_baseline deduped once per (persona, seed)", "rationale": "Baseline does not depend on strategy; duplication wastes API quota and inflates baseline rows", "phase": "5"},
+    {"decision": "W-04: EmbeddingStore computed once in orchestrator thread", "rationale": "27 worker threads recomputing same embeddings = 27x cost", "phase": "5"},
+    {"decision": "D-11: no ALTER TABLE migration for oracle_type", "rationale": "Phase 5 starts fresh; stale DB must be deleted manually", "phase": "5"},
+    {"decision": "W-02: empty payload in _format_message is NOT a deviation", "rationale": "RandomStrategy emits empty payloads by design (Phase 2 baseline contract); firing deviation() would abort the random column under STRICT_MODE=1", "phase": "5"}
   ],
-  "uncommitted_files": [],
-  "next_action": "/clear, then /gsd-execute-phase 5",
-  "context_notes": "Phase 5 fully planned and checker-verified. 5 plans across 4 waves cover ALAB-01 (05-02 + 05-03), ALAB-02 (05-04), ALAB-03 (05-05), EXP-V2-01 (05-01 + 05-04). All 16 CONTEXT.md decisions referenced. Pattern-mapper produced 12 file analogs in 05-PATTERNS.md. Plan-checker passed after one revision round addressing 2 blockers (dependency miss + scope reduction to 1-turn stub) and 4 warnings (key-link unimplemented, deviation() over-scoping, Bash-only verify pipelines, redundant embedding compute). Real LLM cost begins at execute-phase; smoke-test path available via HARNESS_DRY_RUN=1."
+  "uncommitted_files": [
+    "embeddings/session_embeddings.npy (deleted — gitignored artifact, safe to ignore)",
+    "check_db.py (untracked, not part of any plan)",
+    "report_corrections.md (untracked, not part of any plan)"
+  ],
+  "next_action": "Run /gsd-plan-phase 6 to plan Phase 6: Generalization and Human Validation",
+  "context_notes": "Phase 5 fully complete: 5/5 plans executed, 68/68 tests green, UAT 8/8 passed. One gap documented: stale experiments.db must be deleted before harness runs. Phase 6 is next — mapping function, held-out evaluation, human study N>=10. The oracle_type column (05-01) and --oracle-type CLI flag (05-05) were designed specifically for Phase 6 LLM-vs-human comparison."
 }
