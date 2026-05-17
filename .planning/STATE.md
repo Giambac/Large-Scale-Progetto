@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 5 — Ablation Harness and Strategies
-current_plan: 05-05 complete — bootstrap CI analysis layer (compute_bootstrap_ci, CLI, notebook)
-status: phase-complete
-stopped_at: "Phase 5 complete. All 5 plans executed (05-01 through 05-05). Next: Phase 6 — Generalization and Human Validation."
-last_updated: "2026-05-17T00:20:00.000Z"
+current_phase: 6 — Generalization and Human Validation
+current_plan: 06-01 — starting
+status: in-progress
+stopped_at: ""
+last_updated: "2026-05-17T09:00:00.000Z"
 progress:
-  total_phases: 3
-  completed_phases: 2
-  total_plans: 12
-  completed_plans: 12
-  percent: 50
+  total_phases: 6
+  completed_phases: 5
+  total_plans: 5
+  completed_plans: 0
+  percent: 83
 ---
 
 # Project State: Conversational Clustering
@@ -26,16 +26,16 @@ progress:
 
 **Core value:** The interaction loop converges toward oracle-accepted clusterings efficiently, with every design decision — what to show, what to ask, when to stop — measured against cognitive load and information gain.
 
-**Current focus:** Phase 5 — Ablation Harness and Strategies
+**Current focus:** Phase 6 — Generalization and Human Validation
 
 ---
 
 ## Current Position
 
 **Milestone:** v1
-**Current phase:** 5 — Ablation Harness and Strategies
-**Current plan:** 05-05 complete — bootstrap CI analysis layer (compute_bootstrap_ci, CLI, notebook)
-**Status:** Phase 5 Complete
+**Current phase:** 6 — Generalization and Human Validation
+**Current plan:** 06-01 — starting
+**Status:** Phase 6 In Progress
 
 **Progress:**
 
