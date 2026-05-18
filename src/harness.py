@@ -68,35 +68,28 @@ def _is_dry_run() -> bool:
 
 def _build_llm_client():
     """
-    Build a real anthropic.Anthropic client via resolve_llm_key (B-02 fix).
+    Build a provider-agnostic LLM client tuple via src.llm_call.build_client.
 
     Returns None when HARNESS_DRY_RUN=1 — caller MUST then use MockOracle.
-    For non-anthropic providers raises AssertionError: Phase 5 OracleAgent
-    is wired to anthropic.messages.create; openai/google support is out of
-    scope. Mirrors web/app.py:459-462.
+    Returns (provider, sdk_client) otherwise; OracleAgent + chat() consume the
+    tuple directly. Supported providers are listed in src.llm_call.DEFAULT_MODELS.
     """
     if _is_dry_run():
         return None
 
     # Lazy import keeps `python -m examples.run_harness --help` fast.
+    from src.llm_call import build_client
     from src.llm_key import resolve_llm_key
-    provider, api_key = resolve_llm_key()
-    assert provider == "anthropic", (
-        f"Phase 5 harness requires ANTHROPIC_API_KEY (got provider={provider!r}). "
-        "OracleAgent in src/oracle_agent.py calls anthropic.messages.create; "
-        "openai/google providers are out of scope for Phase 5. "
-        "Either set ANTHROPIC_API_KEY in .env or run with HARNESS_DRY_RUN=1 "
-        "(MockOracle, satisfied=True — for CI smoke-tests only)."
-    )
-    import anthropic
-    return anthropic.Anthropic(api_key=api_key)
+
+    return build_client(*resolve_llm_key())
 
 
 def _build_oracle(spec, noise, llm_client, events_path=None):
     """
     Construct the oracle for one combo (B-02 fix).
 
-    Production path: REAL OracleAgent(spec, noise, client=<anthropic>).
+    Production path: REAL OracleAgent(spec, noise, client=<provider tuple>).
+    The client tuple shape is produced by src.llm_call.build_client.
     HARNESS_DRY_RUN=1 path: MockOracle(satisfied=True). The dry-run path
     produces 1-turn convergence for every combo (useful only for CI smoke
     tests; the resulting rows have no statistical power).
@@ -107,7 +100,7 @@ def _build_oracle(spec, noise, llm_client, events_path=None):
         from src.oracle_protocol import MockOracle, OracleReply
         deviation(
             "harness running with MockOracle (HARNESS_DRY_RUN=1) — "
-            "rows have no statistical power; real LLM runs require ANTHROPIC_API_KEY",
+            "rows have no statistical power; real LLM runs require an LLM API key",
         )
         return MockOracle(script=[
             OracleReply(raw_text="", satisfied=True, turn_cognitive_load=0.0)

@@ -186,7 +186,7 @@ class OpenAIClusterNamer:
     API key: set OPENAI_API_KEY env var.
     """
 
-    def __init__(self, api_key: str, model: str = "gpt-5.4-nano") -> None:
+    def __init__(self, api_key: str, model: str = "gpt-4.1-nano") -> None:
         from openai import OpenAI  # type: ignore[import]
         self._client = OpenAI(api_key=api_key)
         self._model = model
@@ -233,6 +233,32 @@ class OpenAIClusterNamer:
             f"LLM 'description' is empty or not a string for cluster {cluster_id}: {result}"
         )
         return {"name": result["name"], "description": result["description"]}
+
+
+def make_namer(provider: str, api_key: str, model: str | None = None) -> "ClusterNamer":
+    """Factory: pick the right concrete ClusterNamer for *provider*.
+
+    Mirrors the routing done by src.llm_call.build_client(): inputs are the
+    (provider, api_key) tuple from resolve_llm_key(). Pass *model* to override
+    the per-namer default (e.g. "gpt-4o-mini" instead of "gpt-5.4-nano").
+
+    Returns an object satisfying the ClusterNamer Protocol.
+    """
+    if provider == "anthropic":
+        import anthropic  # lazy import so OpenAI-only environments don't need it
+        return AnthropicClusterNamer(anthropic.Anthropic(api_key=api_key))
+    if provider == "openai":
+        if model is None:
+            return OpenAIClusterNamer(api_key=api_key)
+        return OpenAIClusterNamer(api_key=api_key, model=model)
+    if provider == "google":
+        if model is None:
+            return GoogleClusterNamer(api_key=api_key)
+        return GoogleClusterNamer(api_key=api_key, model=model)
+    raise AssertionError(
+        f"make_namer: unsupported provider {provider!r}. "
+        "Expected one of: anthropic, openai, google."
+    )
 
 
 def name_all_clusters(

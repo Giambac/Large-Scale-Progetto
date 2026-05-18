@@ -459,7 +459,7 @@ def _run_conversation_background(records: list[dict], log_path: str, backend_nam
     from src.cluster_naming import AnthropicClusterNamer, GoogleClusterNamer, OpenAIClusterNamer
     from src.clustering import HDBSCANBackend, KMeansBackend, build_initial_clustering_state
     from src.conversation_loop import run_conversation
-    from src.embedding_store import EmbeddingStore
+    from src.embedding_store import EMBEDDING_DIM, EmbeddingStore
     from src.llm_key import resolve_llm_key
     from src.oracle_protocol import MockOracle, OracleReply
     from src.stopping import StoppingCriteria
@@ -493,7 +493,7 @@ def _run_conversation_background(records: list[dict], log_path: str, backend_nam
     if os.path.exists(_cached_path):
         import numpy as _np
         _cached_shape = _np.load(_cached_path, mmap_mode="r").shape
-        if _cached_shape[0] == len(texts):
+        if _cached_shape == (len(texts), EMBEDDING_DIM):
             log.info("[startup] Reusing cached embeddings from %s (shape: %s)", _cached_path, _cached_shape)
             shutil.copy2(_cached_path, _session_emb_path)
             store = EmbeddingStore.load(_session_emb_path)
@@ -791,6 +791,132 @@ async def study_session_page(session_id: str, request: Request):
     return templates.TemplateResponse(request=request, name="study.html", context={"session_id": session_id})
 
 
+# ── LLM-Oracle Watch Routes ──────────────────────────────────────────────────
+# Reuses the study-session machinery (same _study_sessions dict, same study.js
+# event names for cluster/projection rendering) but the worker drives the
+# conversation with an OracleAgent instead of waiting on human input.
+
+_WATCH_PERSONAS = ("curious", "skeptical", "drifty")
+_WATCH_STRATEGIES = ("random", "uncertainty_driven", "boundary_driven")
+
+
+@app.post("/watch/sessions")
+async def create_watch_session(request: Request):
+    """
+    POST /watch/sessions — create a new LLM-oracle watch session.
+
+    Request body JSON: {dataset_path, backend, persona, strategy, seed}
+    Returns: {"session_id": str, "watch_url": str}
+    """
+    from pydantic import BaseModel as _BaseModel
+
+    class _WatchSessionCreate(_BaseModel):
+        dataset_path: str
+        backend: str = "hdbscan"
+        persona: str = "curious"
+        strategy: str = "random"
+        seed: int = 1
+
+    body = await request.json()
+    params = _WatchSessionCreate(**body)
+
+    if not os.path.exists(params.dataset_path):
+        raise HTTPException(status_code=400, detail=f"dataset_path does not exist: {params.dataset_path!r}")
+    if params.backend not in ("hdbscan", "kmeans"):
+        raise HTTPException(status_code=400, detail=f"Invalid backend: {params.backend!r}. Must be 'hdbscan' or 'kmeans'.")
+    if params.persona not in _WATCH_PERSONAS:
+        raise HTTPException(status_code=400, detail=f"Invalid persona: {params.persona!r}. Must be one of {_WATCH_PERSONAS}.")
+    if params.strategy not in _WATCH_STRATEGIES:
+        raise HTTPException(status_code=400, detail=f"Invalid strategy: {params.strategy!r}. Must be one of {_WATCH_STRATEGIES}.")
+
+    with open(params.dataset_path, "r", encoding="utf-8") as _f:
+        content = _f.read()
+    records = _parse_upload(content, params.dataset_path)
+    if len(records) < 2:
+        raise HTTPException(status_code=400, detail=f"Dataset too small: {len(records)} records (need >= 2)")
+
+    session_id = _make_session_timestamp()
+    session_dir = os.path.join(SESSIONS_DIR, f"watch-{session_id}")
+
+    from src.db.connection import connect as _db_connect, init_schema as _db_init_schema
+    from src.db.experiments import ExperimentCreate as _ExperimentCreate, create as _exp_create
+    db = _db_connect()
+    _db_init_schema(db)
+
+    _exp_start_ts = datetime.datetime.now(_timezone.utc).isoformat()
+    exp = _exp_create(db, _ExperimentCreate(
+        name=f"oracle-watch-{session_id}",
+        strategy_id="oracle_watch",
+        persona_id=params.persona,
+        seed=params.seed,
+        dataset=params.dataset_path,
+        oracle_type="llm_agent",
+        start_timestamp=_exp_start_ts,
+        details={"watch_session_id": session_id, "strategy_choice": params.strategy},
+    ))
+
+    # Reuse the _study_sessions dict — the SocketIO emitter only inspects keys,
+    # and _end_study_session closes the DB / emits study_ended uniformly.
+    _study_sessions[session_id] = {
+        "records": records,
+        "backend": params.backend,
+        "session_dir": session_dir,
+        "db": db,
+        "exp_id": exp.id,
+        "feedback_event": threading.Event(),  # unused in watch mode but kept for _end_study_session.set()
+        "feedback_queue": [],
+        "turn_index": 0,
+        "state": None,
+        "store": None,
+        "coords": None,
+        "ended": False,
+        "mode": "watch",
+        "persona": params.persona,
+        "strategy": params.strategy,
+        "seed": params.seed,
+    }
+
+    t = threading.Thread(
+        target=_run_watch_background,
+        args=(session_id,),
+        daemon=True,
+    )
+    t.start()
+
+    return {"session_id": session_id, "watch_url": f"/watch/{session_id}"}
+
+
+@app.get("/watch/{session_id}")
+async def watch_session_page(session_id: str, request: Request):
+    """GET /watch/{session_id} — serve the watch HTML page."""
+    if session_id not in _study_sessions:
+        session_dir = os.path.join(SESSIONS_DIR, f"watch-{session_id}")
+        if not os.path.isdir(session_dir):
+            raise HTTPException(status_code=404, detail=f"Watch session not found: {session_id!r}")
+    return templates.TemplateResponse(request=request, name="watch.html", context={"session_id": session_id})
+
+
+@app.get("/watch/{session_id}/replay")
+async def watch_session_replay(session_id: str):
+    """
+    GET /watch/{session_id}/replay — return cached projection/state/chat for the page.
+
+    SocketIO has no replay-on-connect, so a browser that loads watch.html after the
+    worker has already emitted study_projection or chat events misses them. This
+    endpoint lets the page hydrate from whatever the worker has cached so far.
+    Returns nulls/empty when the worker hasn't reached that step yet.
+    """
+    if session_id not in _study_sessions:
+        raise HTTPException(status_code=404, detail=f"Watch session not found: {session_id!r}")
+    sess = _study_sessions[session_id]
+    return {
+        "projection": sess.get("watch_projection"),
+        "state": sess.get("watch_state"),
+        "chat": sess.get("watch_chat", []),
+        "ended": sess.get("ended", False),
+    }
+
+
 # ── Study background worker ───────────────────────────────────────────────────
 
 def _run_study_background(session_id: str) -> None:
@@ -802,9 +928,10 @@ def _run_study_background(session_id: str) -> None:
     """
     import numpy as np
 
-    from src.cluster_naming import AnthropicClusterNamer
+    from src.cluster_naming import make_namer
     from src.clustering import HDBSCANBackend, KMeansBackend, build_initial_clustering_state
-    from src.embedding_store import EmbeddingStore
+    from src.embedding_store import EMBEDDING_DIM, EmbeddingStore
+    from src.llm_call import build_client
     from src.llm_key import resolve_llm_key
     from src.serialization import append_to_audit_log
 
@@ -818,15 +945,10 @@ def _run_study_background(session_id: str) -> None:
     os.makedirs(session_dir, exist_ok=True)
     session_log_path = os.path.join(session_dir, "audit_log.jsonl")
 
-    # Resolve LLM key for naming and satisfaction detection
+    # Resolve LLM key for naming and satisfaction detection (provider-agnostic).
     provider, api_key = resolve_llm_key()
-    assert provider == "anthropic", (
-        f"Study session requires Anthropic API key; got provider={provider!r}. "
-        "Set ANTHROPIC_API_KEY in the environment."
-    )
-    import anthropic as _anthropic
-    _client = _anthropic.Anthropic(api_key=api_key)
-    namer = AnthropicClusterNamer(_client)
+    _client = build_client(provider, api_key)
+    namer = make_namer(provider, api_key)
 
     # Load or compute embeddings (reuse cached if same size)
     texts = [r["text"] for r in records]
@@ -835,7 +957,7 @@ def _run_study_background(session_id: str) -> None:
     _session_emb_path = f"embeddings/study_{session_id}_embeddings.npy"
     if os.path.exists(_cached_path):
         _cached_shape = np.load(_cached_path, mmap_mode="r").shape
-        if _cached_shape[0] == len(texts):
+        if _cached_shape == (len(texts), EMBEDDING_DIM):
             shutil.copy2(_cached_path, _session_emb_path)
             store = EmbeddingStore.load(_session_emb_path)
         else:
@@ -1007,6 +1129,246 @@ def _run_study_background(session_id: str) -> None:
     _end_study_session(session_id, "turn_budget")
 
 
+# ── Watch background worker ──────────────────────────────────────────────────
+
+def _run_watch_background(session_id: str) -> None:
+    """
+    Worker thread for an LLM-oracle watch session.
+
+    Mirrors _run_study_background up through clustering + projection, then drives
+    the conversation programmatically: at each turn the strategy proposes an
+    action, the loop formats a message and asks the OracleAgent for a reply,
+    parses the reply into deltas, applies f_next_state, and emits both the
+    agent's message and the oracle's reply to the browser as chat bubbles.
+    """
+    import numpy as np
+
+    from src.cluster_naming import make_namer
+    from src.clustering import HDBSCANBackend, KMeansBackend, build_initial_clustering_state
+    from src.embedding_store import EMBEDDING_DIM, EmbeddingStore
+    from src.harness import STRATEGY_REGISTRY, _parse_personas
+    from src.llm_call import build_client
+    from src.llm_key import resolve_llm_key
+    from src.oracle_agent import OracleAgent
+    from src.serialization import append_to_audit_log
+    from src.uncertainty import f_uncertainty
+    from src.agent_functions import f_next_best_step, f_next_state
+    from src.cognitive_load import f_cognitive_load
+    from src.conversation_loop import _format_message
+    from src.feedback_parser import parse_feedback
+    from src.hierarchy import HierarchyStore
+
+    sess = _study_sessions[session_id]
+    records = sess["records"]
+    backend_name = sess["backend"]
+    session_dir = sess["session_dir"]
+    db = sess["db"]
+    exp_id = sess["exp_id"]
+    persona_name = sess["persona"]
+    strategy_name = sess["strategy"]
+    seed = sess["seed"]
+
+    os.makedirs(session_dir, exist_ok=True)
+    session_log_path = os.path.join(session_dir, "audit_log.jsonl")
+
+    provider, api_key = resolve_llm_key()
+    _client = build_client(provider, api_key)
+    namer = make_namer(provider, api_key)
+
+    # Load personas from the existing harness YAML so the watch route reuses the same specs.
+    import yaml as _yaml
+    with open("experiments/configs/harness.yaml", "r", encoding="utf-8") as _f:
+        _harness_cfg = _yaml.safe_load(_f)
+    personas_map = _parse_personas(_harness_cfg)
+    assert persona_name in personas_map, f"Persona {persona_name!r} missing from harness.yaml"
+    spec, noise = personas_map[persona_name]
+
+    # Embeddings (reuse cached file if its size matches the dataset).
+    texts = [r["text"] for r in records]
+    os.makedirs("embeddings", exist_ok=True)
+    _cached_path = "embeddings/embeddings.npy"
+    _session_emb_path = f"embeddings/watch_{session_id}_embeddings.npy"
+    if os.path.exists(_cached_path):
+        _cached_shape = np.load(_cached_path, mmap_mode="r").shape
+        if _cached_shape == (len(texts), EMBEDDING_DIM):
+            shutil.copy2(_cached_path, _session_emb_path)
+            store = EmbeddingStore.load(_session_emb_path)
+        else:
+            store = EmbeddingStore.compute_and_save(texts, _session_emb_path)
+    else:
+        store = EmbeddingStore.compute_and_save(texts, _session_emb_path)
+
+    session_embeddings_path = os.path.join(session_dir, "embeddings.npy")
+    shutil.copy2(_session_emb_path, session_embeddings_path)
+
+    if backend_name == "kmeans":
+        backend = KMeansBackend()
+    else:
+        backend = HDBSCANBackend()
+
+    state = build_initial_clustering_state(store.get_all(), records, namer, backend=backend)
+    _write_session_state(state, session_dir)
+    sess["state"] = state
+    sess["store"] = store
+
+    coords = _compute_projection(store.get_all())
+    sess["coords"] = coords
+
+    sorted_cluster_ids = sorted({c.id for c in state.clusters})
+    cluster_colors = {
+        str(cid): _CLUSTER_COLORS[idx % len(_CLUSTER_COLORS)]
+        for idx, cid in enumerate(sorted_cluster_ids)
+    }
+    x_min = float(coords[:, 0].min())
+    x_max = float(coords[:, 0].max())
+    y_min = float(coords[:, 1].min())
+    y_max = float(coords[:, 1].max())
+    per_cluster = {
+        str(c.id): {"item_ids": c.item_ids, "name": c.name, "description": c.description}
+        for c in state.clusters
+    }
+
+    _projection_payload = {
+        "coords": coords.tolist(),
+        "cluster_colors": cluster_colors,
+        "global_bounds": {"x_min": x_min, "x_max": x_max, "y_min": y_min, "y_max": y_max},
+        "per_cluster": per_cluster,
+    }
+    sess["watch_projection"] = _projection_payload
+    sess["watch_chat"] = []   # populated below for replay-on-load
+    emitter.emit("study_projection", _projection_payload)
+
+    def _build_study_state_payload(st):
+        return {
+            "clusters": [
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "description": c.description,
+                    "sample_items": [
+                        {"item_id": iid, "text_preview": _get_item_preview(iid, records)}
+                        for iid in c.item_ids[:8]
+                    ],
+                }
+                for c in st.clusters
+            ]
+        }
+
+    _state_payload = _build_study_state_payload(state)
+    sess["watch_state"] = _state_payload
+    emitter.emit("study_state", _state_payload)
+
+    # Build strategy + oracle.
+    strategy_cls = STRATEGY_REGISTRY[strategy_name]
+    strategy = strategy_cls(seed=seed)
+
+    events_path = os.path.join(session_dir, "events.jsonl")
+    oracle = OracleAgent(
+        spec=spec,
+        noise_params=noise,
+        client=_client,
+        events_path=events_path,
+    )
+
+    hierarchy = HierarchyStore()
+    for cluster in state.clusters:
+        hierarchy.register(cluster.id)
+    id_to_text = {r["item_id"]: r["text"] for r in records}
+    global_instructions: list[str] = []
+
+    turn_index = 0
+    current_state = state
+
+    while turn_index < STUDY_MAX_TURNS:
+        if sess["ended"]:
+            return
+
+        # Agent picks an action and asks the oracle.
+        uncertainty_report = f_uncertainty(current_state)
+        action = f_next_best_step(current_state, strategy, uncertainty_report)
+        message = _format_message(action, current_state, id_to_text)
+        cognitive_load = f_cognitive_load(current_state, message)
+
+        _agent_bubble = {"role": "agent", "turn": turn_index, "text": message, "satisfied": False}
+        sess["watch_chat"].append(_agent_bubble)
+        emitter.emit("watch_agent_message", {"turn": turn_index, "text": message})
+
+        reply = oracle.reply(
+            current_state, message,
+            global_instructions=global_instructions,
+            cognitive_load=cognitive_load,
+        )
+
+        _oracle_bubble = {
+            "role": "oracle",
+            "turn": turn_index,
+            "text": reply.raw_text,
+            "satisfied": bool(reply.satisfied),
+        }
+        sess["watch_chat"].append(_oracle_bubble)
+        emitter.emit("watch_oracle_turn", {
+            "turn": turn_index,
+            "text": reply.raw_text,
+            "satisfied": reply.satisfied,
+        })
+
+        # Parse → apply → persist. Watch-mode tolerance: when the LLM oracle
+        # produces feedback that parse_feedback or f_next_state cannot apply
+        # (e.g. a hallucinated cluster_id, or a merge that references a cluster
+        # already split earlier in the same turn), surface the error as a
+        # system bubble and keep going with current_state. The CLI/research
+        # path (run_conversation) still fails loudly per CLAUDE.md.
+        new_state = current_state
+        try:
+            if reply.raw_text.strip():
+                deltas = parse_feedback(reply.raw_text, current_state, _client)
+            else:
+                deltas = []
+            new_state = f_next_state(
+                current_state, deltas, store, namer, hierarchy, id_to_text, global_instructions
+            )
+        except (AssertionError, KeyError, ValueError) as exc:
+            _err_bubble = {
+                "role": "oracle",
+                "turn": turn_index,
+                "text": f"[apply-feedback error — skipping turn] {type(exc).__name__}: {exc}",
+                "satisfied": False,
+            }
+            sess["watch_chat"].append(_err_bubble)
+            emitter.emit("watch_oracle_turn", _err_bubble)
+            deltas = []
+
+        _write_session_state(new_state, session_dir)
+        append_to_audit_log(new_state, session_log_path)
+
+        from src.db import turns as _turns_db
+        from src.db.turns import TurnCreate as _TurnCreate
+        _turns_db.create(db, _TurnCreate(
+            experiment_id=exp_id,
+            turn_index=new_state.turn_index,
+            action_type=getattr(action, "action_type", "watch_turn"),
+            cognitive_load_score=float(cognitive_load),
+            cumulative_contradiction_count=0,
+            convergence_signal=None,
+            details={"oracle_text": reply.raw_text, "agent_message": message},
+        ))
+
+        turn_index += 1
+        sess["turn_index"] = turn_index
+        current_state = new_state
+        sess["state"] = current_state
+
+        _state_payload = _build_study_state_payload(current_state)
+        sess["watch_state"] = _state_payload
+        emitter.emit("study_state", _state_payload)
+
+        if reply.satisfied:
+            _end_study_session(session_id, "oracle_satisfied")
+            return
+
+    _end_study_session(session_id, "turn_budget")
+
+
 def _get_item_preview(item_id: int, records: list[dict]) -> str:
     """Return the first 80 chars of item text for the given item_id."""
     for r in records:
@@ -1015,28 +1377,21 @@ def _get_item_preview(item_id: int, records: list[dict]) -> str:
     return f"item {item_id}"
 
 
-def _detect_satisfaction(human_text: str, client: object) -> bool:
+def _detect_satisfaction(human_text: str, client: tuple) -> bool:
     """
-    Call claude-haiku-4-5 to detect satisfaction intent in human_text (D-12).
+    Call the configured LLM to detect satisfaction intent in human_text (D-12).
 
-    Returns True if the message indicates satisfaction; False otherwise.
-    All exceptions propagate loudly (fail loudly per CLAUDE.md).
-    anthropic.APIError is re-raised so callers can handle study session errors.
+    `client` is the provider tuple from src.llm_call.build_client. All exceptions
+    propagate loudly (fail-loudly per CLAUDE.md).
     """
-    import anthropic as _anthropic
-    try:
-        prompt = (
-            f"Does this message indicate the user is satisfied with the clustering? "
-            f"Reply YES or NO only. Message: {human_text}"
-        )
-        response = client.messages.create(
-            model="claude-haiku-4-5",
-            max_tokens=4,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response.content[0].text.strip().upper() == "YES"
-    except _anthropic.APIError:
-        raise  # re-raise per CLAUDE.md — API errors at the call boundary propagate loudly
+    from src.llm_call import chat
+
+    prompt = (
+        f"Does this message indicate the user is satisfied with the clustering? "
+        f"Reply YES or NO only. Message: {human_text}"
+    )
+    answer = chat(client, system=None, user=prompt, max_tokens=4)
+    return answer.strip().upper() == "YES"
 
 
 def _end_study_session(session_id: str, convergence_reason: str) -> None:

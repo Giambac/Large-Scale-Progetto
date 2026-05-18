@@ -17,7 +17,51 @@
       </select>
       <button type="submit">Upload Dataset</button>
     </form>
+    <form id="watch-form" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-left:8px;">
+      <label style="font-size:0.8rem;">Watch LLM Oracle:</label>
+      <input type="text" id="watch-dataset" value="dataset/train.jsonl"
+             style="width:170px;font-size:0.78rem;padding:3px 5px;" title="Dataset path">
+      <select id="watch-persona" title="Oracle persona" style="font-size:0.78rem;">
+        <option value="curious">curious</option>
+        <option value="skeptical">skeptical</option>
+        <option value="drifty">drifty</option>
+      </select>
+      <select id="watch-strategy" title="Action strategy" style="font-size:0.78rem;">
+        <option value="random">random</option>
+        <option value="uncertainty_driven">uncertainty</option>
+        <option value="boundary_driven">boundary</option>
+      </select>
+      <select id="watch-backend" title="Clustering backend" style="font-size:0.78rem;">
+        <option value="hdbscan">HDBSCAN</option>
+        <option value="kmeans">K-Means</option>
+      </select>
+      <button type="submit" style="font-size:0.78rem;">Start Watch</button>
+    </form>
   </header>
+  <script>
+    // Watch form handler — POSTs to /watch/sessions then opens the watch page.
+    document.getElementById('watch-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var body = {
+        dataset_path: document.getElementById('watch-dataset').value.trim(),
+        persona:      document.getElementById('watch-persona').value,
+        strategy:     document.getElementById('watch-strategy').value,
+        backend:      document.getElementById('watch-backend').value,
+        seed:         1
+      };
+      fetch('/watch/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || r.statusText); });
+        return r.json();
+      })
+      .then(function (data) { window.location.href = data.watch_url; })
+      .catch(function (err) { alert('Failed to start watch session: ' + err.message); });
+    });
+  </script>
   <!-- VIZ-V2-01: Full-width UMAP projection panel (D-23) -->
   <section class="projection-panel">
     <h2 class="projection-title">2D Embedding Projection (UMAP)</h2>
@@ -52,7 +96,7 @@
     </aside>
   </main>
   <!-- Flask-SocketIO client library served by Flask-SocketIO -->
-  <script src="https://cdn.socket.io/4.6.2/socket.io.min.js"></script>
+  <script src="/static/socket.io.min.js"></script>
   <script src="/static/main.js"></script>
 </body>
 </html>

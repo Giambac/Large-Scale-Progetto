@@ -9,9 +9,9 @@ Key behaviors:
 - OracleSpec/NoiseParams injected at construction; fixed for agent lifetime (D-02).
 - Noise parameters are prompt-injected behavioral rules (D-04).
 - oracle_init JSONL event written to events_path at construction time if provided (D-05 / ORC-02).
-- Provider-aware LLM call: Anthropic uses system= kwarg; OpenAI/Google adapters prepend to message.
+- Provider-agnostic LLM call via src/llm_call.py::chat (handles Anthropic system= vs OpenAI system role).
 - contradiction_detected set by run_conversation() via update_delta_window() after parse_feedback (ORC-04).
-- try/except ONLY at the two LLM client.messages.create() call sites (CLAUDE.md fail-loudly rule).
+- try/except ONLY at the chat() call site (CLAUDE.md fail-loudly rule for external API calls).
 """
 from __future__ import annotations
 
@@ -105,7 +105,7 @@ class OracleAgent:
         spec: OracleSpec,
         noise_params: NoiseParams,
         client: object,
-        model: str = "claude-haiku-4-5",
+        model: str | None = None,
         window_size: int = 10,
         events_path: Path | None = None,
     ) -> None:
@@ -291,41 +291,23 @@ class OracleAgent:
             cognitive_load = f_cognitive_load(state, message)
         system_prompt = self._build_system_prompt(state, cognitive_load, global_instructions)
 
-        # Provider-aware LLM call (Pitfall 2):
-        # Anthropic SDK uses system= as a top-level kwarg.
-        # OpenAI/Google adapters only accept messages= (no system= kwarg).
+        # Provider-agnostic LLM call via src/llm_call.py — handles both
+        # Anthropic (system= kwarg) and OpenAI (system role message) internally.
+        from src.llm_call import chat
+
         try:
-            import anthropic as _anthropic_mod
-            _is_anthropic = isinstance(self._client, _anthropic_mod.Anthropic)
-        except ImportError:
-            _is_anthropic = False
+            raw_text = chat(
+                self._client,
+                model=self._model,
+                system=system_prompt,
+                user=message,
+                max_tokens=512,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"OracleAgent LLM call failed at turn {state.turn_index}: {exc}"
+            ) from exc
 
-        if _is_anthropic:
-            try:
-                response = self._client.messages.create(
-                    model=self._model,
-                    max_tokens=512,
-                    system=system_prompt,
-                    messages=[{"role": "user", "content": message}],
-                )
-            except Exception as exc:
-                raise RuntimeError(
-                    f"OracleAgent LLM call failed at turn {state.turn_index}: {exc}"
-                ) from exc
-        else:
-            full_message = system_prompt + "\n\n" + message
-            try:
-                response = self._client.messages.create(
-                    model=self._model,
-                    max_tokens=512,
-                    messages=[{"role": "user", "content": full_message}],
-                )
-            except Exception as exc:
-                raise RuntimeError(
-                    f"OracleAgent LLM call failed at turn {state.turn_index}: {exc}"
-                ) from exc
-
-        raw_text = response.content[0].text
         satisfied = "[SATISFIED]" in raw_text
 
         # contradiction_detected and contradicted_turn are set by run_conversation()

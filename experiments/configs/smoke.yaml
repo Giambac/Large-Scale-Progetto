@@ -1,0 +1,37 @@
+# experiments/configs/smoke.yaml
+# Minimal 1-combo harness config for fast end-to-end smoke testing.
+# 1 strategy × 1 persona × 1 seed = 1 run, ~30 seconds with a real LLM.
+#
+# Usage:
+#   python -m examples.run_harness --config experiments/configs/smoke.yaml
+
+harness:
+  strategies: [random]
+  personas:   [curious]
+  seeds:      [1]
+  exclude: []
+  max_workers: 1
+  dataset: dataset/train.jsonl
+  log_dir: sessions
+
+personas:
+  curious:
+    preferred_k: 5
+    semantic_axes: [topic, sentiment]
+    persona_description: "A curious researcher who explores ideas patiently and rarely contradicts earlier feedback."
+    noise:
+      consistency_rate: 0.9
+      drift_probability: 0.05
+      sycophancy_resistance: 0.7
+
+stopping:
+  epsilon: 0.05
+  n_fallback: 3
+  weights:
+    global: 1.0
+    cluster: 0.5
+    point: 0.2
+    instructional: 0.1
+
+judge:
+  pairwise_sample_size: 50

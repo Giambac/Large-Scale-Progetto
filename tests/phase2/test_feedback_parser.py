@@ -5,12 +5,17 @@ from unittest.mock import MagicMock
 
 
 def _make_mock_client(response_payload):
-    """Build a mock Anthropic client returning response_payload as JSON text."""
+    """Build a mock LLM client tuple ('anthropic', sdk) returning JSON text via chat().
+
+    chat() routes to client.messages.create(...) for the 'anthropic' provider, so
+    the mock SDK only needs that surface. Returns the tuple shape expected by
+    src.llm_call.chat().
+    """
     mock_response = MagicMock()
     mock_response.content = [MagicMock(text=json.dumps(response_payload))]
     mock_client = MagicMock()
     mock_client.messages.create.return_value = mock_response
-    return mock_client
+    return ("anthropic", mock_client)
 
 
 def test_parse_feedback_returns_list(tiny_state_3cluster):
@@ -95,13 +100,14 @@ def test_parse_feedback_crashes_on_unknown_type(tiny_state_3cluster):
 
 @pytest.mark.llm
 def test_parse_feedback_real_llm(tiny_state_3cluster):
-    """Integration test: parse_feedback with real Anthropic client (skipped in CI)."""
+    """Integration test: parse_feedback with real LLM client (skipped if no key)."""
     import os
     from src.feedback_parser import parse_feedback
-    key = os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
-        pytest.skip("ANTHROPIC_API_KEY not set")
-    import anthropic
-    client = anthropic.Anthropic(api_key=key)
+    from src.llm_call import build_client
+    from src.llm_key import resolve_llm_key
+
+    if not any(os.environ.get(v) for v in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY")):
+        pytest.skip("No LLM API key set")
+    client = build_client(*resolve_llm_key())
     deltas = parse_feedback("Split cluster 0 into two groups.", tiny_state_3cluster, client)
     assert isinstance(deltas, list)

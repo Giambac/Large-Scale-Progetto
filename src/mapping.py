@@ -19,11 +19,12 @@ from __future__ import annotations
 import json
 from typing import Protocol, runtime_checkable
 
-import anthropic
 import numpy as np
 from pydantic import BaseModel
 
 from src.embedding_store import EMBEDDING_MODEL, EmbeddingStore
+from src.llm_call import build_client, chat
+from src.llm_key import resolve_llm_key
 from src.logging_setup import deviation
 from src.serialization import load_audit_log
 from src.state import ClusteringState
@@ -105,7 +106,7 @@ def extract_oracle_rules(audit_log_path: str) -> OracleRuleSet:
     Raises:
         AssertionError: If audit_log_path does not exist or is empty (via load_audit_log).
         json.JSONDecodeError: If JSONL is malformed (fail loudly).
-        anthropic.APIError: Re-raised from LLM call boundary.
+        Provider SDK errors: propagated from src.llm_call.chat (fail-loudly).
     """
     # load_audit_log validates existence and non-empty — asserts propagate loudly
     _states = load_audit_log(audit_log_path)  # validates file exists and non-empty
@@ -136,17 +137,8 @@ def extract_oracle_rules(audit_log_path: str) -> OracleRuleSet:
     instructions_block = "\n".join(f"- {t}" for t in instructional_texts)
     prompt = _EXTRACT_RULES_PROMPT.format(instructions=instructions_block)
 
-    client = anthropic.Anthropic()
-    try:
-        resp = client.messages.create(
-            model="claude-haiku-4-5",
-            max_tokens=512,
-            messages=[{"role": "user", "content": prompt}],
-        )
-    except anthropic.APIError:
-        raise  # re-raise — no swallowing
-
-    raw = resp.content[0].text.strip()
+    client = build_client(*resolve_llm_key())
+    raw = chat(client, system=None, user=prompt, max_tokens=512).strip()
     parsed = json.loads(raw)  # JSONDecodeError propagates (fail loudly)
 
     return OracleRuleSet(
@@ -194,7 +186,7 @@ class LLMMappingStrategy:
     Assigns new items to clusters using an LLM with cluster descriptions and
     OracleRuleSet rules as context (D-04).
 
-    One anthropic.Anthropic() client call per assign() call.
+    One LLM call per assign() via src/llm_call.py::chat (provider-agnostic).
     LLM response is validated against known cluster IDs before use (T-06-01-01 threat mitigation).
     """
 
@@ -228,7 +220,7 @@ class LLMMappingStrategy:
 
         Raises:
             ValueError: If LLM returns a cluster ID not in state.clusters.
-            anthropic.APIError: Re-raised from LLM call boundary.
+            Provider SDK errors: propagated from src.llm_call.chat (fail-loudly).
         """
         assert len(state.clusters) > 0, (
             "LLMMappingStrategy.assign: state has no clusters — cannot assign item"
@@ -270,17 +262,8 @@ class LLMMappingStrategy:
             f"Reply with ONLY the cluster ID integer, nothing else."
         )
 
-        client = anthropic.Anthropic()
-        try:
-            resp = client.messages.create(
-                model="claude-haiku-4-5",
-                max_tokens=8,
-                messages=[{"role": "user", "content": prompt}],
-            )
-        except anthropic.APIError:
-            raise  # re-raise — no swallowing
-
-        value = resp.content[0].text.strip()
+        client = build_client(*resolve_llm_key())
+        value = chat(client, system=None, user=prompt, max_tokens=8).strip()
 
         if value not in valid_cluster_ids:
             raise ValueError(

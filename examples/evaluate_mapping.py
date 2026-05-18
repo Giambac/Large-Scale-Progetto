@@ -51,9 +51,10 @@ def main() -> None:
     args = parser.parse_args()
 
     # Lazy imports — keep --help fast (D-25 pattern)
-    import anthropic
     from src.analysis import compute_bootstrap_ci
     from src.embedding_store import EmbeddingStore
+    from src.llm_call import build_client, chat
+    from src.llm_key import resolve_llm_key
     from src.logging_setup import deviation
     from src.mapping import MAPPING_REGISTRY, extract_oracle_rules
     from src.serialization import deserialize_state
@@ -120,7 +121,7 @@ def main() -> None:
     )
     valid_cluster_ids = {c.id for c in state.clusters}
 
-    client = anthropic.Anthropic()
+    client = build_client(*resolve_llm_key())
     gt_labels: list[int | None] = []
     for item in sampled:
         item_text = item["text"]
@@ -130,15 +131,7 @@ def main() -> None:
             f"Item text: {item_text}\n"
             "Reply with ONLY the cluster ID integer."
         )
-        try:
-            resp = client.messages.create(
-                model="claude-haiku-4-5",
-                max_tokens=8,
-                messages=[{"role": "user", "content": prompt}],
-            )
-        except anthropic.APIError:
-            raise
-        raw = resp.content[0].text.strip()
+        raw = chat(client, system=None, user=prompt, max_tokens=8).strip()
         try:
             label = int(raw)
         except ValueError:

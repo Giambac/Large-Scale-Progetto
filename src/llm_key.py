@@ -1,10 +1,11 @@
 """
 src/llm_key.py — Resolve the active LLM API key from .env or environment.
 
-Priority order (first non-empty key wins):
-  1. ANTHROPIC_API_KEY
-  2. OPENAI_API_KEY
-  3. GOOGLE_API_KEY
+Active providers (first non-empty key wins):
+  1. OPENAI_API_KEY
+
+Anthropic and Google entries are commented out — re-enable them in _PRIORITY
+to restore multi-provider fallback. Order in the list is the precedence order.
 
 .env is loaded once at import time without overwriting variables already set
 in the process environment (so CI/shell exports always take precedence).
@@ -19,8 +20,8 @@ _ENV_PATH = Path(__file__).parent.parent / ".env"
 
 _PRIORITY: list[tuple[str, str]] = [
     ("openai",    "OPENAI_API_KEY"),
-    ("anthropic", "ANTHROPIC_API_KEY"),
-    ("google",    "GOOGLE_API_KEY"),
+    # ("anthropic", "ANTHROPIC_API_KEY"),
+    # ("google",    "GOOGLE_API_KEY"),
 ]
 
 
@@ -54,8 +55,8 @@ def resolve_llm_key() -> tuple[str, str]:
             return provider, key
 
     raise AssertionError(
-        "No LLM API key found. Add one to .env (copy .env.example):\n"
-        "  ANTHROPIC_API_KEY=sk-ant-...   (Claude — checked first)\n"
-        "  OPENAI_API_KEY=sk-...          (GPT — checked second)\n"
-        "  GOOGLE_API_KEY=...             (Gemini — checked third)"
+        "No LLM API key found. Add OPENAI_API_KEY to .env (copy .env.example):\n"
+        "  OPENAI_API_KEY=sk-...\n"
+        "(Anthropic and Google entries are commented out in _PRIORITY — "
+        "re-enable them in src/llm_key.py to restore multi-provider fallback.)"
     )

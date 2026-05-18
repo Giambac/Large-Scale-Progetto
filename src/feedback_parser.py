@@ -123,7 +123,7 @@ def parse_feedback(
     Args:
         raw_text: Raw oracle utterance string.
         state:    Current ClusteringState — used to validate cluster IDs.
-        client:   Anthropic-compatible client (client.messages.create).
+        client:   Provider tuple (provider, sdk_client) — see src/llm_call.py::build_client.
 
     Returns:
         List of FeedbackDelta objects (may be empty).
@@ -136,19 +136,22 @@ def parse_feedback(
     if not raw_text:
         return []
 
+    from src.llm_call import chat
+
     cluster_summary = _build_cluster_summary(state)
     prompt = _PARSE_FEEDBACK_PROMPT.format(
         cluster_summary=cluster_summary,
         raw_text=raw_text,
     )
 
-    response = client.messages.create(
-        model="claude-haiku-4-5",
+    response_text = chat(
+        client,
+        system=None,
+        user=prompt,
         max_tokens=512,
-        messages=[{"role": "user", "content": prompt}],
     )
 
-    cleaned_text = response.content[0].text.strip()
+    cleaned_text = response_text.strip()
     # Strip markdown code fences (same pattern as cluster_naming.py)
     if cleaned_text.startswith("```"):
         cleaned_text = cleaned_text.split("```")[1]
