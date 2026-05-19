@@ -1,85 +1,48 @@
 {
   "version": "1.0",
-  "timestamp": "2026-05-17T09:45:00Z",
-  "phase": "6",
-  "phase_name": "Generalization and Human Validation",
+  "timestamp": "2026-05-19T00:30:00.000Z",
+  "phase": "06",
+  "phase_name": "06-generalization-and-human-validation",
   "phase_dir": ".planning/phases/06-generalization-and-human-validation",
-  "plan": 5,
-  "task": 5,
-  "total_tasks": 5,
+  "plan": null,
+  "task": 6,
+  "total_tasks": 11,
   "status": "paused",
+  "activity": "uat",
   "completed_tasks": [
-    {"id": "06-01", "name": "src/mapping.py — OracleRuleSet, MappingProtocol, LLM+Centroid strategies (GEN-01)", "status": "done", "commit": "8e98138"},
-    {"id": "06-02", "name": "examples/evaluate_mapping.py — held-out evaluation (GEN-02)", "status": "done", "commit": "ee84865"},
-    {"id": "06-03", "name": "Human study UI — /study routes, study.html, study.js, satisfaction detection (EXP-V2-01)", "status": "done", "commit": "579680a"},
-    {"id": "06-04", "name": "tests/test_mapping.py + tests/test_study_ui.py — 14 tests green", "status": "done", "commit": "5404514"},
-    {"id": "06-05", "name": "examples/compare_oracle_types.py + notebooks/llm_vs_human.ipynb (EXP-V2-01)", "status": "done", "commit": "50f1fd5"},
-    {"id": "06-review", "name": "Code review (4 critical, 5 warning, 3 info) — all 12 fixed", "status": "done", "commit": "7b153a2"}
+    {"id": 1, "name": "Test Suite Passes", "status": "issue", "severity": "major"},
+    {"id": 2, "name": "evaluate_mapping CLI Help", "status": "pass"},
+    {"id": 3, "name": "compare_oracle_types CLI Help", "status": "pass"},
+    {"id": 4, "name": "Web Server Boots Cold", "status": "pass"},
+    {"id": 5, "name": "Create Study Session via POST", "status": "pass"}
   ],
   "remaining_tasks": [
-    {"id": "research-01", "name": "Run LLM oracle harness sessions to populate experiments.db", "status": "not_started"},
-    {"id": "research-02", "name": "Conduct human study N>=10 via /study UI (EXP-V2-01)", "status": "not_started"},
-    {"id": "research-03", "name": "Run evaluate_mapping.py against real session dir", "status": "not_started"},
-    {"id": "research-04", "name": "Run compare_oracle_types.py with populated DB", "status": "not_started"},
-    {"id": "research-05", "name": "Re-verify Phase 6 with /gsd-verify-work 6", "status": "not_started"}
+    {"id": 6, "name": "Study Page Three-Panel Layout", "status": "awaiting_response"},
+    {"id": 7, "name": "Initial Clustering Renders", "status": "not_started"},
+    {"id": 8, "name": "Submit Feedback Updates State", "status": "not_started"},
+    {"id": 9, "name": "Satisfaction Detection Flow", "status": "not_started"},
+    {"id": 10, "name": "Session Cap at 30 Turns", "status": "not_started"},
+    {"id": 11, "name": "Notebook Structure Valid", "status": "not_started"}
   ],
   "blockers": [
     {
-      "description": "Human study N>=10 not completed — experiments.db has no oracle_type='human' rows",
-      "type": "human_action",
-      "workaround": "Infrastructure fully built; start uvicorn and route participants to /study"
-    },
-    {
-      "description": "LLM-vs-human gap not quantified — compare_oracle_types.py needs real data in DB",
-      "type": "human_action",
-      "workaround": "Run harness for LLM rows first, then human study for human rows"
+      "description": "Test 1 (test_llm_strategy_validates_cluster_id) fails with ImportError: 'src.mapping' is not a package",
+      "type": "technical",
+      "workaround": "Monkeypatch path issue — likely needs to patch 'anthropic.Anthropic' at the source module rather than via 'src.mapping.anthropic' attribute path"
     }
   ],
   "human_actions_pending": [
-    {
-      "action": "Run LLM oracle sessions: python -m examples.run_harness --config experiments/configs/harness.yaml",
-      "context": "Populates experiments.db with oracle_type='llm' rows for LLM-vs-human comparison",
-      "blocking": false
-    },
-    {
-      "action": "Conduct human study: uvicorn web.app:asgi_app --host 0.0.0.0 --port 5000, route N>=10 participants to http://localhost:5000/study",
-      "context": "EXP-V2-01 — direct answer to research question 2. Blocks Phase 6 completion.",
-      "blocking": true
-    },
-    {
-      "action": "Run evaluate_mapping.py: python -m examples.evaluate_mapping --session-dir sessions/<ts>/",
-      "context": "GEN-02 requires a completed session dir with state.json + audit_log.jsonl",
-      "blocking": false
-    }
+    {"action": "Continue UAT from Test 6 (Study Page Three-Panel Layout) — visually verify three-panel browser layout", "context": "Mid-conversational UAT for Phase 6", "blocking": false},
+    {"action": "Run human study with N>=10 participants via /study UI", "context": "Required for Phase 6 verification gaps SC-2", "blocking": true},
+    {"action": "Run compare_oracle_types.py after DB populated with both LLM and human rows", "context": "Required for SC-3 LLM-vs-human gap quantification", "blocking": true}
   ],
   "decisions": [
-    {
-      "decision": "Direct anthropic.Anthropic() call (not OracleAgent) for ground-truth labeling in evaluate_mapping.py",
-      "rationale": "Avoids OracleAgent noise params interfering with ground-truth accuracy (D-06 from 06-CONTEXT.md)",
-      "phase": "6"
-    },
-    {
-      "decision": "_make_session_timestamp() uses datetime.now(timezone.utc) + secrets.token_hex(4) suffix",
-      "rationale": "CR-04 fix: prevents same-second collision that silently overwrote _study_sessions state dict",
-      "phase": "6"
-    },
-    {
-      "decision": "_detect_satisfaction re-raises anthropic.APIError instead of swallowing via deviation()",
-      "rationale": "CR-02 fix: CLAUDE.md fail-loudly rule — caller handles API errors, not the helper",
-      "phase": "6"
-    },
-    {
-      "decision": "Verification status is gaps_found (not failed) — gaps are research execution, not code",
-      "rationale": "All 9 code artifacts exist and are correct; the science hasn't been run yet",
-      "phase": "6"
-    }
+    {"decision": "Test 1 failure logged as 'major' (not blocker) — production code is fine, monkeypatch path needs adjustment in test_mapping.py only", "rationale": "Code review verified production correctness; one test of 14 fails due to monkeypatch path mismatch", "phase": "06"}
   ],
   "uncommitted_files": [
-    ".planning/STATE.md",
-    ".planning/phases/06-generalization-and-human-validation/06-REVIEW-FIX.md",
-    ".planning/phases/06-generalization-and-human-validation/06-VERIFICATION.md",
+    ".planning/phases/06-generalization-and-human-validation/06-UAT.md",
     "embeddings/session_embeddings.npy"
   ],
-  "next_action": "After human study and harness runs complete: /gsd-verify-work 6",
-  "context_notes": "All Phase 6 code infrastructure is done and all 12 review issues fixed. Verification has 2 gaps that are research execution gaps (not code gaps): human study not run yet, experiments.db has no human oracle rows. The code is ready; the science needs to be conducted. Delete stale experiments.db before running harness (Phase 5 note still applies)."
+  "next_action": "Run /gsd-verify-work 6 to resume UAT — picks up at Test 6 (Study Page Three-Panel Layout) per pending result in 06-UAT.md",
+  "context_notes": "Phase 6 code is complete and verified (06-VERIFICATION.md returned gaps_found for research-execution items only, not code). Conversational UAT in progress — 4 passed, 1 issue, 6 pending. Test 6 awaits visual browser check of the three-panel /study layout. The 2 outstanding research gaps (human study N>=10, LLM-vs-human quantification) require human action and are tracked separately."
 }
