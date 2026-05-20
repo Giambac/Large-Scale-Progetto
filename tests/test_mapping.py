@@ -199,20 +199,12 @@ def test_llm_strategy_validates_cluster_id(monkeypatch):
     rule_set = _make_rule_set()
     strategy = LLMMappingStrategy()
 
-    # Mock LLM to return a cluster ID not in state.clusters (0 or 1)
-    class FakeMessage:
-        text = "99"  # not a valid cluster ID
-
-    class FakeContent:
-        content = [FakeMessage()]
-
-    class FakeClient:
-        class messages:
-            @staticmethod
-            def create(**kw):
-                return FakeContent()
-
-    monkeypatch.setattr("src.mapping.anthropic.Anthropic", lambda: FakeClient())
+    # Mock the LLM surface in src.mapping: assign() calls
+    # build_client(*resolve_llm_key()) then chat(...). Patch all three so no live
+    # provider key or network call is needed, and chat returns an invalid id "99".
+    monkeypatch.setattr("src.mapping.resolve_llm_key", lambda: ("anthropic", "test-key"))
+    monkeypatch.setattr("src.mapping.build_client", lambda *a, **kw: object())
+    monkeypatch.setattr("src.mapping.chat", lambda client, **kw: "99")
 
     with pytest.raises(ValueError, match="unknown cluster id"):
         strategy.assign("item text", state, rule_set, store)

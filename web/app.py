@@ -209,7 +209,7 @@ _args = _parse_args()
 _backend_name: str = _args.backend
 
 # ── Human study session constants (EXP-V2-01, D-13) ─────────────────────────
-STUDY_MAX_TURNS: int = int(os.environ.get("STUDY_MAX_TURNS", "30"))
+STUDY_MAX_TURNS: int = int(os.environ.get("STUDY_MAX_TURNS", "15"))
 _study_sessions: dict = {}  # session_id -> study session state dict
 
 # ── Module-level session state (single session per server run, D-15) ─────────
@@ -1026,7 +1026,8 @@ def _run_study_background(session_id: str) -> None:
                     ],
                 }
                 for c in st.clusters
-            ]
+            ],
+            "turn_index": st.turn_index,
         }
 
     emitter.emit("study_state", _build_study_state_payload(state))
@@ -1251,7 +1252,8 @@ def _run_watch_background(session_id: str) -> None:
                     ],
                 }
                 for c in st.clusters
-            ]
+            ],
+            "turn_index": st.turn_index,
         }
 
     _state_payload = _build_study_state_payload(state)

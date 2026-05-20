@@ -7,7 +7,7 @@ Covers:
   - POST /study/sessions with invalid backend → 400
   - GET /study/{session_id} with known session → 200 with "study" in body
   - GET /study/{session_id} with unknown session → 404
-  - STUDY_MAX_TURNS default value (30)
+  - STUDY_MAX_TURNS default value (15)
   - STUDY_MAX_TURNS env override parsing
 
 No test makes a live Anthropic API call or a live DB connection.
@@ -123,14 +123,14 @@ def test_get_study_page_unknown_session(study_client):
 
 def test_study_max_turns_env_default(monkeypatch):
     """
-    STUDY_MAX_TURNS defaults to 30 when the environment variable is not set.
+    STUDY_MAX_TURNS defaults to 15 when the environment variable is not set.
     Validates the module-level constant directly (module already loaded).
     """
     import web.app as app_module
     # Remove STUDY_MAX_TURNS from env if present, then check the constant.
-    # The module constant was set at import time; verify it's 30.
+    # The module constant was set at import time; verify it's 15.
     monkeypatch.delenv("STUDY_MAX_TURNS", raising=False)
-    assert app_module.STUDY_MAX_TURNS == 30
+    assert app_module.STUDY_MAX_TURNS == 15
 
 
 def test_study_max_turns_env_override(monkeypatch):

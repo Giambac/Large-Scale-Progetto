@@ -18,6 +18,7 @@
     }
     header h1 { margin: 0; font-size: 1.1rem; }
     #session-display { font-size: 0.8rem; opacity: 0.75; }
+    #turn-counter { font-size: 0.8rem; opacity: 0.9; margin-left: auto; font-weight: bold; }
 
     /* Three-column layout */
     .study-layout {
@@ -139,6 +140,7 @@
   <header>
     <h1>Conversational Clustering Study</h1>
     <span id="session-display">Session: {{ session_id }}</span>
+    <span id="turn-counter">Turn: 0</span>
   </header>
 
   <div class="study-layout">
@@ -190,6 +192,6 @@
   </div>
 
   <script src="/static/socket.io.min.js"></script>
-  <script src="/static/study.js?v=2026-05-18-6"></script>
+  <script src="/static/study.js?v=2026-05-20-1"></script>
 </body>
 </html>

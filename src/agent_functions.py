@@ -25,6 +25,7 @@ from src.feedback import (
     ORACLE_MOVE_CONFIDENCE, UNIFORM_FALLBACK_THRESHOLD,
 )
 from src.uncertainty import UncertaintyReport
+from src.logging_setup import deviation
 
 if TYPE_CHECKING:
     from src.embedding_store import EmbeddingStore
@@ -499,14 +500,38 @@ def f_next_state(
 
     current_state = state
     for delta in sorted_deltas:
+        # Validate cluster-referencing deltas against the LIVE state before applying.
+        # Deltas originate from parse_feedback (an LLM call) — an untrusted boundary that
+        # can hallucinate cluster ids, and earlier deltas in this batch may retire a
+        # cluster a later delta names. deviation() skips the delta (warn in production,
+        # raise under STRICT_MODE) rather than letting _apply_* assert and kill the caller.
+        live_ids = {c.id for c in current_state.clusters}
         if isinstance(delta, GlobalFeedback):
             # FB-01: accumulate instruction in caller-owned list (schema frozen — not stored in state)
             global_instructions.append(delta.instruction_text)
         elif isinstance(delta, SplitFeedback):
+            if delta.cluster_id not in live_ids:
+                deviation("f_next_state: SplitFeedback references unknown cluster — skipping",
+                          cluster_id=delta.cluster_id, live_ids=sorted(live_ids))
+                continue
             current_state = _apply_split(delta, current_state, store, namer, hierarchy, id_to_text, global_instructions)
         elif isinstance(delta, MergeFeedback):
+            if delta.cluster_a_id not in live_ids or delta.cluster_b_id not in live_ids:
+                deviation("f_next_state: MergeFeedback references unknown cluster — skipping",
+                          cluster_a_id=delta.cluster_a_id, cluster_b_id=delta.cluster_b_id,
+                          live_ids=sorted(live_ids))
+                continue
+            if delta.cluster_a_id == delta.cluster_b_id:
+                deviation("f_next_state: MergeFeedback names the same cluster twice — skipping",
+                          cluster_id=delta.cluster_a_id)
+                continue
             current_state = _apply_merge(delta, current_state, namer, hierarchy, id_to_text, global_instructions)
         elif isinstance(delta, MoveItemFeedback):
+            if delta.target_cluster_id not in live_ids:
+                deviation("f_next_state: MoveItemFeedback references unknown target cluster — skipping",
+                          target_cluster_id=delta.target_cluster_id, item_id=delta.item_id,
+                          live_ids=sorted(live_ids))
+                continue
             current_state = _apply_move_item(delta, current_state, namer, id_to_text, global_instructions)
         elif isinstance(delta, InstructionalFeedback):
             # FB-04: accumulate instruction in caller-owned list (Phase 3 — same pattern as GlobalFeedback)

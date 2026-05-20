@@ -14,7 +14,7 @@
     // ── Mode detection (study | watch) ────────────────────────────────────────
     var MODE = (document.body && document.body.dataset && document.body.dataset.mode) || 'study';
     var IS_WATCH = (MODE === 'watch');
-    console.log('[study.js v=2026-05-18-5] mode=' + MODE + ' path=' + window.location.pathname);
+    console.log('[study.js v=2026-05-20-1] mode=' + MODE + ' path=' + window.location.pathname);
 
     // Global error reporter — any uncaught error from this script is surfaced
     // in the chat-status (watch mode) or study-status (study mode) bar so it's
@@ -111,8 +111,12 @@
 
     // ── study_state: render cluster cards ────────────────────────────────────
     socket.on('study_state', function (data) {
-        // data = { clusters: [{ id, name, description, sample_items: [{ item_id, text_preview }] }] }
+        // data = { clusters: [{ id, name, description, sample_items: [...] }], turn_index }
         renderClusterCards(data.clusters);
+        if (typeof data.turn_index === 'number') {
+            var tc = document.getElementById('turn-counter');
+            if (tc) tc.textContent = 'Turn: ' + data.turn_index;
+        }
     });
 
     // ── study_projection: draw mini-plot canvases ─────────────────────────────
