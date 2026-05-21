@@ -6,7 +6,7 @@
 1. Does conversational refinement converge toward oracle-accepted clusterings, and how fast (turns, cognitive load)?
 2. Do LLM-simulated oracles converge in patterns comparable to human oracles, or systematically differ?
 **Deadline:** early June 2026
-**Updated:** 2026-05-15
+**Updated:** 2026-05-21
 
 ---
 
@@ -18,6 +18,15 @@
 - [x] **Phase 4: Judge Agent** — Convergence detection, per-turn metrics, no-dialogue baseline, database — COMPLETE 2026-05-16
 - [ ] **Phase 5: Ablation Harness and Strategies** — 3 strategies, N×M experiment runner, bootstrap CI
 - [ ] **Phase 6: Generalization and Human Validation** — Mapping function, held-out evaluation, human study N≥10
+
+### Milestone v2.0 — Experimentation Flexibility & Scale (Phases 7–12)
+
+- [ ] **Phase 7: Pluggable Embedding Backends + Dynamic Dimension** — Replace hardcoded EMBEDDING_DIM, EmbeddingBackend Protocol (ST + OpenAI), provenance manifest + content-hash cache [FOUNDATIONAL]
+- [ ] **Phase 8: Colab Compute-Only Artifact Pipeline** — Colab notebook computes embeddings + initial clustering, HF Hub handoff, manifest-validated local import
+- [ ] **Phase 9: Interactive UMAP Recolor + Real-Time Chat** — Cache-once/recolor projection, end-to-end human chat, live LLM-oracle transcript
+- [ ] **Phase 10: Oracle-Initiated Flow + KMeans-Only + Oracle YAML Config** — Dataset intro → oracle first query → first fit; drop HDBSCAN; selectable oracle model + versioned YAML config
+- [ ] **Phase 11: Re-Fit KMeans Per Query + Cluster-ID Alignment + Query Filter** — Per-query re-fit on fixed embeddings, Hungarian ID alignment, NL query normalization [ENGINEERING CORE]
+- [ ] **Phase 12: Coordination Agent** — Decompose complex ops into pairwise sub-operations across N clusterer sessions, recombine into one authoritative state [LAST — research spike]
 
 ---
 
@@ -202,6 +211,88 @@ Plans:
 
 ---
 
+## Milestone v2.0 — Experimentation Flexibility & Scale
+
+**Defined:** 2026-05-21
+**Goal:** Make the system configurable and scalable for research — Colab compute offload, swappable embedding/clustering backends, oracle-initiated flow, query filter, and a coordination agent.
+**Locked decisions:** re-cluster (re-fit KMeans), not re-embed, per query · Colab is compute-only · oracle configs in versioned YAML · coordination agent built last.
+**Build order:** dependency-locked (per research/SUMMARY.md "Implications for Roadmap"). Two foundational refactors (dynamic dim, provenance manifest) gate everything embedding-related; the coordination agent is last.
+
+### Phase 7: Pluggable Embedding Backends + Dynamic Dimension
+**Goal:** Embedding dimension is learned from data (no hardcoded constant) and the system can embed with either a local SentenceTransformer (384) or OpenAI `text-embedding-3-small` (1536), chosen per run, with provenance-validated, content-hash-cached artifacts. [FOUNDATIONAL — unblocks all embedding-related work]
+**Depends on:** Phase 6 (v1 system shipped)
+**Requirements:** EMB-V2-01, EMB-V2-02, EMB-V2-03
+**Success Criteria** (what must be TRUE):
+  1. A run can select either the SentenceTransformer or OpenAI embedding backend and the system embeds the dataset correctly with either, deriving the dimension (384 or 1536) from the chosen backend — no `EMBEDDING_DIM = 384` literal remains, and fail-loudly asserts now check the dynamic expected dimension.
+  2. Re-running an identical (dataset, model) embedding request reuses the content-hash cache instead of re-embedding (no second OpenAI charge), verifiable from logs.
+  3. Loading an embedding artifact whose manifest (model, dim, normalized flag, library versions, input hash, n_items) mismatches the expected values crashes loudly rather than silently proceeding.
+  4. Every produced embedding vector passes a unit-norm assertion at the backend boundary (normalize-at-boundary contract).
+**Plans:** TBD
+**Notes:** `EMBEDDING_DIM` is asserted in 4+ sites in `embedding_store.py` and 3 cache-shape sites in `web/app.py`; a stale 1536-dim cache could be silently reused as 384 until this lands. The provenance/manifest schema defined here is the shared contract consumed by Phase 8 (Colab artifacts). Clean up pre-existing docstring drift (docstrings say 768, constant is 384) and bump stale `requirements.txt` floors. Standard pattern (Protocol mirrors existing `ClusteringBackend`) — likely no research spike needed.
+
+### Phase 8: Colab Compute-Only Artifact Pipeline
+**Goal:** Heavy embedding + initial-clustering compute is offloaded to a Colab GPU notebook that exports a validated artifact bundle; the local app imports it via HuggingFace Hub and runs the interactive UI locally, importing zero Colab-only dependencies. [Colab is compute-ONLY]
+**Depends on:** Phase 7 (manifest/dim schema must exist first)
+**Requirements:** COL-V2-01, COL-V2-02
+**Success Criteria** (what must be TRUE):
+  1. A Colab notebook computes embeddings + the initial clustering and exports a bundle (embeddings.npy, initial_state.json, manifest.json) recording `embedding_dim` and full provenance.
+  2. The local app downloads that bundle from HuggingFace Hub and loads it after validating it against the manifest (dtype float32, shape (N, dim), model/dim/lib-version match, input hash, `n_items` count).
+  3. A manifest mismatch or truncated/short artifact causes a loud failure on load rather than a silent partial import.
+  4. The local runtime imports zero Colab-only dependencies (the boundary is a directory of files, not shared code).
+**Plans:** TBD
+**Notes:** Local torch is CPU-only (`2.11.0+cpu`) — the concrete motivation for GPU offload. Use a `requirements-colab.txt` mirroring local versions; pin sklearn `n_init`/seed so Colab and local produce matching initial clusterings. Write artifacts atomically (temp → fsync → rename).
+
+### Phase 9: Interactive UMAP Recolor + Real-Time Chat
+**Goal:** The UMAP projection caches its 2D coordinates once (coords are a fixed function of the immutable embeddings) and recolors on any cluster change instead of refitting; human chat works end-to-end in the study UI; and the LLM-oracle conversation is viewable in real time.
+**Depends on:** Phase 8
+**Requirements:** VIZ-V2-02, UX-V2-01, UX-V2-02
+**Success Criteria** (what must be TRUE):
+  1. The UMAP scatter computes 2D coordinates once per session and, on a cluster change, re-emits only a recolor payload (points keep their positions; no per-turn refit / no layout jitter).
+  2. A human can hold a complete clustering conversation end-to-end in the study UI (send a message, see the system reply and updated clustering, continue to convergence).
+  3. An observer can watch the LLM-oracle conversation transcript update live, turn by turn, without reloading.
+**Plans:** TBD
+**UI hint**: yes
+**Notes (CROSS-PHASE COUPLING):** The recolor MECHANISM is built here, but recolor is only fully CORRECT once the Phase 11 cluster-ID alignment lands — recoloring with churned KMeans IDs paints points the wrong colors. Build and ship the recolor mechanism in this phase, but DEFER final recolor-correctness validation until Phase 11's alignment layer exists (the planner must sequence the recolor visual-correctness check after Phase 11). Chat view is a presentation layer over the existing event stream — never a parser-bypass side channel.
+
+### Phase 10: Oracle-Initiated Flow + KMeans-Only + Oracle YAML Config
+**Goal:** The loop is reframed to be oracle-initiated — dataset introduction → oracle's first query → first clustering → conversational session — running on KMeans only (HDBSCAN dropped from the interactive path), with the oracle's LLM model selectable per run and its prompt/persona/noise config stored in versioned YAML.
+**Depends on:** Phase 9
+**Requirements:** CLUST-V2-01, FLOW-V2-01, FLOW-V2-02, OCFG-V2-01, OCFG-V2-02
+**Success Criteria** (what must be TRUE):
+  1. On session start the user/oracle sees a dataset introduction/summary BEFORE any clustering runs.
+  2. The oracle issues an initial query that triggers the first clustering, after which the conversational session begins; "autonomous-first" clustering is retained as a selectable ablation condition.
+  3. The interactive path uses KMeans only — HDBSCAN is no longer used for interactive clustering.
+  4. A run can select the oracle's LLM model (Anthropic or OpenAI), and the oracle's prompt/persona/noise configuration loads from a versioned YAML file, validated into a typed config object (fail-loudly on malformed config).
+**Plans:** TBD
+**UI hint**: yes
+**Notes:** Bootstrap via `build_initial_clustering_state(defer=True)` placeholder → intro → first query → first fit. Intro should be written to an `events.jsonl` sidecar, NOT an audit state line (intro-turn audit semantics: sidecar, not turn 0/-1). Re-fit semantics are KMeans-specific (HDBSCAN has no fixed-K re-fit), so KMeans-only must settle here before Phase 11. Document a default for an empty/degenerate first query and assert-before-first-clustering. Oracle config: `ruamel.yaml` for round-trip + `pydantic` typed validation; configs live in git, never `experiments.db`. Orchestration-around-existing-loop — likely no research spike.
+
+### Phase 11: Re-Fit KMeans Per Query + Cluster-ID Alignment + Query Filter
+**Goal:** Each oracle query re-fits KMeans on the fixed embeddings (no re-embedding), a cluster-ID alignment step preserves cluster IDs/names across re-fits, K never auto-reoptimizes (changes only via explicit oracle split/merge intent), and a query filter normalizes oracle natural language into simple, contradiction-free clusterer instructions. [THE engineering core]
+**Depends on:** Phase 10 (oracle-initiated first fit) and Phase 9 (recolor mechanism)
+**Requirements:** CLUST-V2-02, FILT-V2-01
+**Success Criteria** (what must be TRUE):
+  1. An oracle query re-fits KMeans on `store.get_all()` (embeddings stay fixed — the read-only EmbeddingStore invariant is preserved; no re-embedding occurs).
+  2. After a re-fit, clusters that correspond to prior clusters keep their IDs and names (Hungarian alignment on item-set overlap / centroid cosine); new IDs are minted only when K genuinely increased via oracle intent.
+  3. K stays constant across a re-fit unless the oracle's feedback was a split/merge — an assertion enforces `new_k == prev_k` otherwise; BIC K-selection runs only at the first clustering.
+  4. The query filter normalizes a natural-language oracle query into deduped, latest-intent-wins, contradiction-free clusterer instructions (extending `feedback_parser`/`_contradicts`) WITHOUT semantically second-guessing oracle intent.
+  5. The same query against the same state produces identical re-fit results (determinism test passes).
+**Plans:** TBD
+**Notes (CROSS-PHASE COUPLING):** This alignment layer is the linchpin that makes the Phase 9 UMAP recolor correct — once it lands, validate that recolor shows stable colors across re-fits. Open design decisions to settle in planning (FLAGGED for a focused research pass): (a) cluster-ID reconciliation policy — preserve-stable-IDs vs. renumber; (b) hierarchy lineage on a wholesale re-fit — `record_split/merge` assume incremental edits, so decide whether to reset the hierarchy on re-fit or skip hierarchy recording for re-fit turns. The filter normalizes structure only; the feedback/contradiction layer arbitrates intent (avoid double-handling).
+
+### Phase 12: Coordination Agent
+**Goal:** A coordination agent decomposes a complex clustering operation into pairwise sub-operations, fans them out to N clusterer sessions, and recombines the results into a single authoritative `ClusteringState` — preserving the single-source-of-truth / single-writer / single-replay-log invariants, with whole-operation abort on partial failure. [LAST — highest risk]
+**Depends on:** Phase 11 (re-fit + alignment stable)
+**Requirements:** COORD-V2-01, COORD-V2-02
+**Success Criteria** (what must be TRUE):
+  1. A complex clustering operation is decomposed into pairwise sub-operations, each runnable as an independent clusterer session.
+  2. Pairwise sub-operations fan out to N clusterer sessions (running in the existing no-I/O mode: `db_conn=None`, `socketio=None`) and recombine into ONE authoritative `ClusteringState`, with exactly one audit line per merged turn.
+  3. On any sub-operation failure the WHOLE operation aborts (no partial merge) and recovery falls back to the last good audit-log state.
+**Plans:** TBD
+**Notes (RESEARCH SPIKE FLAGGED):** All three technical researchers flagged this for its own `/gsd-research-phase` spike — cross-session state-merge semantics, contradiction recombination across N sessions, partial-failure rollback, and BLAS/thread-pool contention under N concurrent KMeans fits are unresolved DESIGN problems, not mechanics. Sub-sessions run via `threading.Thread` (mind BLAS oversubscription); NEVER reach for eventlet/gevent. Pure `merge(authoritative, [sub_results])` reduce applied sequentially through the single-writer pipeline.
+
+---
+
 ## Progress Table
 
 | Phase | Status | Target week |
@@ -212,6 +303,17 @@ Plans:
 | 4. Judge Agent | ⬜ Not started | 2–3 |
 | 5. Ablation Harness and Strategies | ⬜ Not started | 3 |
 | 6. Generalization and Human Validation | ⬜ Not started | 3–4 |
+
+### Milestone v2.0 Progress
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 7. Pluggable Embedding Backends + Dynamic Dimension | 0/? | Not started | - |
+| 8. Colab Compute-Only Artifact Pipeline | 0/? | Not started | - |
+| 9. Interactive UMAP Recolor + Real-Time Chat | 0/? | Not started | - |
+| 10. Oracle-Initiated Flow + KMeans-Only + Oracle YAML Config | 0/? | Not started | - |
+| 11. Re-Fit KMeans Per Query + Cluster-ID Alignment + Query Filter | 0/? | Not started | - |
+| 12. Coordination Agent | 0/? | Not started | - |
 
 ---
 
@@ -263,9 +365,36 @@ Plans:
 **Mapped:** 37
 **Unmapped:** 0
 
+### Milestone v2.0 Requirements Coverage
+
+| Requirement | Phase | Category |
+|-------------|-------|----------|
+| EMB-V2-01 | Phase 7 | Embedding & Compute |
+| EMB-V2-02 | Phase 7 | Embedding & Compute |
+| EMB-V2-03 | Phase 7 | Embedding & Compute |
+| COL-V2-01 | Phase 8 | Compute Offload (Colab) |
+| COL-V2-02 | Phase 8 | Compute Offload (Colab) |
+| VIZ-V2-02 | Phase 9 | Visualization & Chat |
+| UX-V2-01 | Phase 9 | Visualization & Chat |
+| UX-V2-02 | Phase 9 | Visualization & Chat |
+| CLUST-V2-01 | Phase 10 | Clustering |
+| FLOW-V2-01 | Phase 10 | Flow & Onboarding |
+| FLOW-V2-02 | Phase 10 | Flow & Onboarding |
+| OCFG-V2-01 | Phase 10 | Oracle Configurability |
+| OCFG-V2-02 | Phase 10 | Oracle Configurability |
+| CLUST-V2-02 | Phase 11 | Clustering |
+| FILT-V2-01 | Phase 11 | Query Filter |
+| COORD-V2-01 | Phase 12 | Coordination Agent |
+| COORD-V2-02 | Phase 12 | Coordination Agent |
+
+**Total v2.0 requirements:** 17
+**Mapped:** 17
+**Unmapped:** 0
+
 ---
 
 *Roadmap created: 2026-04-29*
 *Updated: 2026-05-08 — replaced with Trio roadmap; Phase 2 v1 requirements marked complete; Trio reqs (BACK-V2-01, VIZ-V2-01, UI-V2-01) added as pending*
+*Updated: 2026-05-21 — appended Milestone v2.0 (Phases 7–12, 17 requirements across 7 categories); v1 phases 1–6 preserved unchanged; dependency-locked build order per research/SUMMARY.md*
 *Headline questions: Q1 (convergence speed) + Q2 (LLM vs human oracles)*
 *Tier: Trio*

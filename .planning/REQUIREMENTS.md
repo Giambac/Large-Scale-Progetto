@@ -161,6 +161,8 @@ These requirements activate when the team grows to 3–4 people or v1 is complet
 
 ## Traceability
 
+### v1 + Trio
+
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | PRE-01 | Phase 1 | Pending |
@@ -202,6 +204,33 @@ These requirements activate when the team grows to 3–4 people or v1 is complet
 - Mapped to phases: 33
 - Unmapped: 0
 
+### Milestone v2.0
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| EMB-V2-01 | Phase 7 | Pending |
+| EMB-V2-02 | Phase 7 | Pending |
+| EMB-V2-03 | Phase 7 | Pending |
+| COL-V2-01 | Phase 8 | Pending |
+| COL-V2-02 | Phase 8 | Pending |
+| VIZ-V2-02 | Phase 9 | Pending |
+| UX-V2-01 | Phase 9 | Pending |
+| UX-V2-02 | Phase 9 | Pending |
+| CLUST-V2-01 | Phase 10 | Pending |
+| FLOW-V2-01 | Phase 10 | Pending |
+| FLOW-V2-02 | Phase 10 | Pending |
+| OCFG-V2-01 | Phase 10 | Pending |
+| OCFG-V2-02 | Phase 10 | Pending |
+| CLUST-V2-02 | Phase 11 | Pending |
+| FILT-V2-01 | Phase 11 | Pending |
+| COORD-V2-01 | Phase 12 | Pending |
+| COORD-V2-02 | Phase 12 | Pending |
+
+**Coverage:**
+- v2.0 requirements: 17 total
+- Mapped to phases: 17
+- Unmapped: 0
+
 ---
 *Requirements defined: 2026-04-29*
-*Last updated: 2026-05-21 — milestone v2.0 requirements added (17 reqs across 7 categories); traceability filled by roadmapper*
+*Last updated: 2026-05-21 — milestone v2.0 requirements added (17 reqs across 7 categories); v2.0 traceability table filled by roadmapper (Phases 7–12, 100% coverage)*
