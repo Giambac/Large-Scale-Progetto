@@ -8,6 +8,28 @@ An AI research system that clusters any textual dataset by conversing with a hum
 
 The interaction loop converges toward oracle-accepted clusterings efficiently, with every design decision — what to show, what to ask, when to stop — measured against cognitive load and information gain.
 
+## Current Milestone: v2.0 Experimentation Flexibility & Scale
+
+**Goal:** Make the system configurable and scalable for research — offload heavy compute to Colab, support swappable embedding/clustering backends, reshape the loop to be oracle-initiated, and add a query filter plus a coordination agent.
+
+**Target features:**
+- Colab compute-only (HuggingFace) for embeddings + initial clustering; the interactive web UI stays local
+- Pluggable embedding backends (SentenceTransformer + OpenAI `text-embedding-3-small`) with a dynamic embedding dimension
+- KMeans-only clustering (drop HDBSCAN)
+- Oracle-initiated flow: dataset introduction → oracle's first query → first clustering → conversational session
+- Re-fit KMeans on each oracle query (embeddings stay fixed — no re-embedding)
+- Configurable oracle: model selection + structured prompts stored as versioned YAML files
+- Query filter: translate oracle natural-language queries into simple, contradiction-free clusterer instructions
+- Interactive UMAP with cached 2D projection coords (recolor on cluster change, not refit)
+- Verified human chat + real-time LLM chat view
+- Coordination agent: decompose complex operations into pairwise sub-operations across N clusterer sessions (deferred to the last phase)
+
+**Key decisions (locked at milestone start):**
+- Item "recompute embeddings per query" resolved as **re-cluster** (re-fit KMeans), not re-embed — preserves the read-only EmbeddingStore invariant
+- Colab is **compute-only**; sockets/UI run locally
+- Oracle prompts/configs live in **versioned YAML files**, not the database
+- The coordination agent (N parallel sessions) is the **last phase** — highest risk, built after simpler upgrades stabilize
+
 ## Requirements
 
 ### Validated
@@ -99,4 +121,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-29 after initialization*
+*Last updated: 2026-05-21 — milestone v2.0 (Experimentation Flexibility & Scale) started*

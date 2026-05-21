@@ -1,24 +1,22 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-current_phase: 6 — Generalization and Human Validation
-current_plan: 06-01 — starting
-status: in-progress
-stopped_at: ""
-last_updated: "2026-05-17T09:00:00.000Z"
+milestone: v2.0
+milestone_name: Experimentation Flexibility & Scale
+status: planning
+last_updated: "2026-05-21T09:17:42.355Z"
+last_activity: 2026-05-21
 progress:
-  total_phases: 6
-  completed_phases: 5
-  total_plans: 5
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
   completed_plans: 0
-  percent: 83
+  percent: 0
 ---
 
 # Project State: Conversational Clustering
 
-**Last updated:** 2026-05-17
-**Updated by:** 05-05-PLAN.md complete — bootstrap CI analysis layer (ALAB-03): compute_bootstrap_ci pure function, CLI compute_ci.py, notebooks/analysis.ipynb
+**Last updated:** 2026-05-20
+**Updated by:** Phase 6 UAT complete (11/11 pass). Fixed during UAT: f_next_state delta validation (blocker — was crashing study worker), test_mapping monkeypatch path (major), study UI turn counter, STUDY_MAX_TURNS 30→15. Committed b57f735. Remaining: human study (N≥10) + compare_oracle_types — both human-action.
 
 ---
 
@@ -32,35 +30,20 @@ progress:
 
 ## Current Position
 
-**Milestone:** v1
-**Current phase:** 6 — Generalization and Human Validation
-**Current plan:** 06-01 — starting
-**Status:** Phase 6 In Progress
-
-**Progress:**
-
-[█████████░] 83%
-Phase 1 [##########] 100% Pre-Code Obligations and Foundation ✓
-Phase 2 [##########] 100% Clustering Agent Core (v1 ✓, BACK-V2-01 ✓, VIZ-V2-01 ✓, UI-V2-01 ✓)
-Phase 3 [##########] 100% Oracle Agent (ORC-01 ✓, ORC-02 ✓, ORC-03 ✓, ORC-04 ✓, FB-04 ✓)
-Phase 4 [##########] 100% Judge Agent (DB layer ✓, f_eval ✓, PairBag ✓, run_baseline ✓, UI panels ✓)
-Phase 5 [##########] 100% Ablation Harness and Strategies (05-01 ✓, 05-02 ✓, 05-03 ✓, 05-04 ✓, 05-05 ✓)
-Phase 6 [          ]   0% Generalization and Human Validation
-
-```
-
-**Overall:** 4/6 phases complete
-
----
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-05-21 — Milestone v2.0 started
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Phases complete | 4/6 |
-| Plans complete | 23/? |
-| Requirements satisfied | 29/37 |
+| Phases complete | 6/6 (code) |
+| Plans complete | 28/28 |
+| Phase 6 UAT | 11/11 pass |
 | Blockers | 0 |
+| Pending (human-action) | human study N≥10; compare_oracle_types |
 
 ---
 
@@ -110,12 +93,15 @@ Phase 6 [          ]   0% Generalization and Human Validation
 
 ### Todos
 
-- [ ] Select primary dataset and lock held-out split with hash (Phase 1, PRE-01)
-- [ ] Write the three stopping criteria as code-ready specifications (Phase 1, PRE-02)
-- [ ] Write human validation study protocol (N=5-10, within-subject, consented) — needed before Phase 6
-- [ ] Decide LangGraph vs. plain Python before Phase 2 begins
-- [ ] Decide sklearn HDBSCAN vs. standalone `hdbscan` package at Phase 1 gate
-- [ ] Install umap-learn and hdbscan packages in environment (hdbscan/umap tests failing due to missing modules)
+- [x] Select primary dataset and lock held-out split with hash (Phase 1, PRE-01)
+- [x] Write the three stopping criteria as code-ready specifications (Phase 1, PRE-02)
+- [x] Decide LangGraph vs. plain Python before Phase 2 begins — plain Python while-loop
+- [x] Decide sklearn HDBSCAN vs. standalone `hdbscan` package at Phase 1 gate — standalone hdbscan 0.8.42
+- [x] Install umap-learn and hdbscan packages in environment
+- [ ] **Run human validation study (N≥10) via /study UI** — Phase 6 SC-2, human-action
+- [ ] **Run `compare_oracle_types` after DB has both LLM + human rows** — Phase 6 SC-3, human-action
+- [ ] (Optional) `/gsd-secure-phase 6` — security gate skipped this session
+- [ ] Capture the Phase 6 "design issues" the user noted during UAT (see 06-UAT.md Open Design Notes)
 
 ### Blockers
 
@@ -125,12 +111,12 @@ None.
 
 ## Session Continuity
 
-**Last session:** 2026-05-17
-**Stopped at:** Phase 6 context gathered — mapping function (pluggable MappingProtocol, LLM + centroid strategies, OracleRuleSet Pydantic), study UI (/study route, faceted UMAP, linked item lists), oracle satisfaction for humans (LLM parser + 30-turn cap + confirm prompt), GEN-02 (LLM oracle as ground-truth labeler). Ready for planning.
+**Last session:** 2026-05-20
+**Stopped at:** Phase 6 UAT complete — 11/11 pass. Resumed paused UAT from test 6, found and fixed two bugs: (1) blocker — f_next_state applied LLM-parsed deltas without validating cluster ids against live state, crashing the study worker thread on a hallucinated/retired id; now skips invalid deltas via deviation(); (2) major — test_mapping monkeypatch targeted a nonexistent src.mapping.anthropic path; now patches resolve_llm_key/build_client/chat. Added study UI turn counter; lowered STUDY_MAX_TURNS 30→15 per user. All 14 mapping/study tests pass. Committed b57f735. Dev server left running in background at port 5000 (STUDY_MAX_TURNS=15).
 
-**Prior session:** 2026-05-17T00:20:00Z — Phase 5 fully done. All 5 plans executed.
+**Prior session:** 2026-05-19 — Phase 6 code complete, UAT paused at test 6/11.
 
-**To resume:** Run `/clear` then `/gsd-plan-phase 6`.
+**To resume:** Phase 6 engineering is done. Next real action is the human study (N≥10 via /study), then `python -m examples.compare_oracle_types` + notebooks/llm_vs_human.ipynb. Optional: `/gsd-secure-phase 6` (skipped this session), then `/gsd-complete-milestone`.
 
 **New canonical reference for Phase 4:** wazzup "how to build simple applications" recipe (user-provided this session). Planner should ask user to commit the recipe markdown somewhere stable (e.g. `private/recipes/`) before execute begins — the recipe is the source of design discipline for the DB layer shape and docs discipline.
 
