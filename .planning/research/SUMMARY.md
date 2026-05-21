@@ -1,341 +1,179 @@
-# Research Summary: Conversational Clustering
+# Project Research Summary
 
-**Project:** Conversational Clustering — Multi-Agent Human-in-the-Loop System
-**Synthesized:** 2026-04-29
-**Sources:** STACK.md, FEATURES.md, ARCHITECTURE.md, PITFALLS.md
-**Overall confidence:** HIGH for core system design; MEDIUM for oracle cognitive-load modeling and LLM sycophancy mitigations
+**Project:** Conversational Clustering
+**Milestone:** v2.0 — Experimentation Flexibility & Scale
+**Domain:** Human-in-the-loop conversational clustering research system (subsequent-milestone additions)
+**Researched:** 2026-05-21
+**Confidence:** HIGH (stack + architecture code-grounded; features MEDIUM-HIGH; pitfalls HIGH for code-grounded items)
 
----
+> Scope: this milestone ADDS capabilities to a shipped v1 system (3-agent loop, `feedback_parser`, `OracleAgent`, FastAPI+uvicorn+socketio UI, single-fit clustering). Research is scoped to the NEW v2 features only. The settled v1 design (pure `f_*` functions, single while-loop, read-only `EmbeddingStore`, audit-log-as-replay-source) is treated as ground truth and not re-derived. (FEATURES.md Part B is preserved v1 history and is out of scope for this synthesis.)
 
 ## Executive Summary
 
-This project builds a three-agent system (Clustering Agent, Oracle Agent, Judge Agent) in which a simulated human oracle iteratively refines text cluster proposals through natural-language conversation, and the system learns to extract codified preferences efficiently. The research contribution is not a better clustering algorithm but a better interaction strategy: the headline question is whether a guided `f_next_best_step` policy (uncertainty-driven, information-gain-driven, or hybrid) reaches oracle-accepted clusterings faster and at lower cognitive cost than a random baseline. The literature on interactive clustering (COBRAS, COBRA, Prodigy) confirms this is a well-scoped, publishable research question — but only if turn-efficiency and cognitive load are primary metrics from day one, not derivations added at evaluation time.
-
-The critical risk is not technical: the core stack (LangGraph + sentence-transformers + HDBSCAN + structured Python state) is well-understood and stable. The risks are methodological. LLM-simulated oracles are systematically over-consistent, over-cooperative, and overconfident in ways that produce optimistic convergence results that do not transfer to real humans. Evaluation that measures final clustering quality (NMI, silhouette) rather than turn efficiency cannot isolate what the dialogue contributes. Soft assignments from HDBSCAN are uncalibrated, making `f_uncertainty` unreliable if raw probabilities are used without temperature scaling. All three of these risks are pre-empted by design decisions made before the first agent is coded.
-
-The recommended approach is to build in strict dependency order — data structures and embedding infrastructure first, then agent logic one agent at a time with gates between phases, then ablation harness — while treating evaluation design, oracle noise parameterization, state serialization, and the held-out split lock as Phase 0 obligations that cannot be deferred.
-
----
-
-## 1. Recommended Stack
-
-The definitive technology choices with rationale.
-
-| Layer | Choice | Version | Rationale |
-|-------|--------|---------|-----------|
-| Agent orchestration | LangGraph | ~=1.1.10 | Only framework where stateful graph + HITL interrupts + durable checkpointing are first-class, not workarounds. Reached 1.0 stability in late 2025. |
-| LLM abstraction | LangChain Core + langchain-openai | ~=0.3.x | Model-agnostic wrappers; swapping gpt-4o-mini for gpt-4o (or Anthropic) for ablations requires changing one config value. |
-| LLM provider | OpenAI API | gpt-4o-mini (Oracle, Judge), gpt-4o (Clustering Agent) | gpt-4o-mini at $0.15/M tokens enables hundreds of ablation runs without budget pressure; gpt-4o for proposal quality. |
-| Sentence embeddings | sentence-transformers, model: all-mpnet-base-v2 | ~=5.3.0 | Local inference, fully deterministic, reproducible across runs. No API cost. all-mpnet-base-v2 outperforms all-MiniLM-L6-v2 by 3-4% on MTEB clustering benchmarks; speed is not a bottleneck. |
-| Clustering algorithm | scikit-learn HDBSCAN | >=1.6 | Native in sklearn since 1.3; provides `probabilities_` for soft assignments; automatically determines cluster count; outputs hierarchy. Use standalone `hdbscan` package only if full multinomial probability vectors are required (evaluate at Phase 1). |
-| State schema | Python dataclasses + Pydantic v2 | stdlib / 2.x | TypedDict/dataclass for LangGraph state; Pydantic for structured LLM output parsing and oracle reply validation. |
-| Experiment tracking | JSON-first, migrate to MLflow at Phase 5 | mlflow >=2.19 | JSON is sufficient for early phases. MLflow adds run comparison and parameter search when ablation experiments begin (20+ runs). Design JSON schema to be MLflow-compatible from day one. |
-| CLI / interface | Typer + Rich | typer >=0.12, rich >=13 | Typer generates `--help` from type hints; Rich panels and tables are the right display primitive for "show cluster proposal, ask oracle" turns. Typer + Rich is the 2025-2026 standard for Python research CLI tooling. |
-| Supporting libraries | numpy, pandas, scipy, pytest, python-dotenv, datasets (HuggingFace) | see STACK.md | Core numeric substrate, dataset loading, cosine distance, unit testing, API key management. |
-
-**Python version:** 3.11 (maximum compatibility) or 3.12. All pinned packages support both.
-
-**Non-negotiable stack decisions:**
-1. LangGraph is the single state authority. All agent communication passes through the shared TypedDict state object — never direct agent-to-agent calls.
-2. Embeddings are computed once at startup and stored in a read-only `EmbeddingStore`. Never re-embedded per turn. Never inlined in `ClusteringState`.
-3. JSON-first logging from Phase 1. MLflow from Phase 5 (ablation harness). Schema must be compatible across the migration.
-
----
+v2.0 turns a working single-fit conversational clusterer into a configurable, scalable research instrument. The shape is well understood because three technical researchers (stack, architecture, pitfalls) independently read the actual codebase and converged on the same conclusions: the milestone is mostly a sequence of careful **extensions to existing seams**, gated by **two foundational refactors** that everything else depends on. There is no greenfield system here — the work succeeds or fails on how cleanly each new feature grafts onto `run_conversation`, `EmbeddingStore`, `parse_feedback`, the `ClusteringBackend` Protocol, the `post_turn_callback` projection hook, and `ClusteringState` (the single source of truth).
 
-## 2. Table Stakes Features
+The recommended approach is dependency-locked and non-negotiable in its ordering: **(1)** replace the hardcoded `EMBEDDING_DIM = 384` constant with a dynamic, manifest-/backend-carried dimension before any second embedding backend can exist; **(2)** define an artifact-provenance manifest schema (model, dim, normalized flag, library versions, input hash, n_items) that both Colab artifacts and the OpenAI/SentenceTransformer backends validate against on load; **(3)** make the UMAP projection recolor-not-refit (cache coords once, since coords are a fixed function of immutable embeddings); **(4)** reshape the loop to be oracle-initiated; **(5)** add per-query KMeans re-fit on fixed embeddings plus the query filter; **(6)** build the coordination agent last. Stack choices are deliberately conservative and reuse what is already installed — `huggingface_hub` for Colab-to-local artifact handoff, the already-imported `openai` SDK for embeddings, `pydantic` for config validation, and `ruamel.yaml` (the only genuinely new dependency) for round-trip YAML oracle configs.
 
-Features whose absence makes the core research question unanswerable.
+The single linchpin risk that the whole back half of the milestone hinges on is **cluster-ID stability across per-query KMeans re-fits**. KMeans label assignment is arbitrary between fits; a naive re-fit churns every cluster ID, silently breaking merge/split history, cluster names, and the UMAP recolor (points jump colors for no reason). The fix is a Hungarian-style alignment step (`scipy.optimize.linear_sum_assignment` on item-set Jaccard / centroid cosine) that re-maps new clusters to prior IDs, combined with hard K-gating so re-fit NEVER re-optimizes K (the project's locked "K changes only via oracle intent" anti-feature). The recolor-not-refit UMAP phase hard-depends on this alignment landing first. The other concentrated risk is the coordination agent's cross-session state merge, which breaks every single-state/single-writer/single-log cardinality assumption and is explicitly flagged for its own research spike.
 
-| Feature | Why It Is Table Stakes |
-|---------|----------------------|
-| Initial clustering with LLM-generated names and descriptions | Oracle has nothing to react to without it; anchor for the first turn |
-| Soft assignments (per-point probability distribution over K clusters) | Required for calibration, boundary detection, and `f_uncertainty`; hard labels discard the information the system needs |
-| `f_uncertainty`: ranked list of high-entropy boundary points, split candidates, merge candidates | Prerequisite for any non-random query strategy; broken if soft assignments are uncalibrated |
-| `f_next_best_step`: show / ask / stop decision with pluggable strategy interface | The core algorithmic contribution; must be a Strategy interface, not a switch statement, for ablation to work |
-| Global, cluster-level, point-level, and instructional feedback parsing | Covers the full range of oracle actions; point-level and instructional are higher complexity but needed for the paper's feedback taxonomy |
-| State persistence: typed `ClusteringState` serialized to disk after every turn | Without this, sessions cannot be reproduced, ablations cannot be crossed, and contradiction handling is unreliable after 20+ turns |
-| Contradiction / preference-drift tracking with active use in `f_next_best_step` | Explicitly required by research question; must be an active signal (triggers clarification question), not a passive log |
-| Stopping signal: three independently operationalized criteria (turn budget, diminishing returns on state change, structured oracle satisfaction token) | Without an explicit stopping contract, Judge Agent and Oracle Agent become circularly dependent |
-| Turn-by-turn experiment log (JSONL AuditLog) | Without structured logs there is no data; all primary metrics (turns-to-convergence, cognitive load, contradiction rate) are computed from this log alone |
-| LLM-simulated Oracle Agent with configurable consistency, drift, sycophancy-resistance, and fatigue parameters | Human oracles are too expensive for ablation scale; simulation with explicit noise parameters is the stated method — and must be realistic enough to stress-test contradiction handling |
-| Held-out frozen evaluation subset locked and hashed before any code runs | Required for valid generalization measurement; contamination is irreversible |
-| Ablation runner: 3-5 interaction strategies x oracle personas x dataset seeds | The headline experiment; without it the paper has no result |
-| Turns-to-convergence and cognitive load per turn with bootstrap 95% CIs | Primary efficiency measures; project constraint requires CIs on all headline claims |
-| Generalization function: codified oracle preference applied to held-out items | Explicitly in scope; tests whether extracted preferences transfer to unseen data |
-| Human validation study (N = 5-10) with within-subject design | Project constraint: "Simulated oracle results must be validated against humans before any quantitative claim." This is not optional. |
+## Key Findings
 
-**Build priority order (from FEATURES.md MVP recommendation):**
-1. Initial clustering + names/descriptions
-2. Soft assignments + `f_uncertainty`
-3. Global and cluster-level feedback
-4. State persistence + AuditLog
-5. Stopping signal (turn budget first)
-6. Oracle Agent (one persona, explicit noise params)
-7. `f_next_best_step` (random baseline + uncertainty-driven)
-8. Ablation runner (two strategies, N sessions)
-9. Metrics + bootstrap CIs
-10. Point-level feedback
-11. Instructional feedback
-12. Generalization function
-13. Human validation study
+### Recommended Stack
 
-**Defer to v2:** Hierarchy navigation, UMAP/t-SNE visualization, web UI, multiple clustering backends, real-time embedding updates from oracle feedback, inter-annotator agreement scoring, noise-tolerant constraint propagation (nCOBRAS-style).
+See [STACK.md](STACK.md). The strategy is "reuse what's installed, add almost nothing." Versions are pinned to what was probed live on the machine (2026-05-21), so recommendations are known-good. The one genuinely new dependency is `ruamel.yaml` (round-trip comment/order preservation for human-edited, version-controlled oracle configs); `PyYAML` is the fallback if the team rejects a new dep. Critically, the local env already runs the modern `huggingface_hub 1.7.1` + `sentence-transformers 5.4.1` pairing, so **no down-pinning is required** — but the stale `sentence-transformers>=2.7` floor in `requirements.txt` is misleading and must be bumped to `>=5.4`. Local torch is **CPU-only** (`2.11.0+cpu`) — this is the concrete motivation for offloading embedding compute to Colab GPU.
 
----
+**Core technologies (new for v2.0):**
+- `huggingface_hub` (>=1.7,<2): Colab-to-local artifact handoff via a private dataset repo — already installed transitively, gives versioned/authed/resumable transfer of `embeddings.npy` + `initial_state.json` + `manifest.json`.
+- `openai` (>=2.26,<3): second embedding backend (`text-embedding-3-small`, 1536-dim) — **reuses the same `build_client("openai", key)` already in `src/llm_call.py`**; no new auth surface.
+- `ruamel.yaml` (>=0.18,<0.19): versioned oracle config YAML — keeps git diffs clean; the only new install.
+- `pydantic` (>=2.12, already present): validate parsed YAML into a typed `OracleConfig` at the boundary (fail-loudly).
 
-## 3. Architecture Overview
+**Explicitly forbidden:** `eventlet`/`gevent` (hard project rule — monkey-patches stdlib, corrupts numpy/sklearn/UMAP locking; the new embedding work touches numpy heavily); running FastAPI/socketio on Colab (Colab is compute-ONLY); re-hardcoding a new dim literal (e.g. `OPENAI_DIM = 1536`); storing oracle configs in `experiments.db` (locked: YAML in git).
 
-### System diagram
+### Expected Features
 
-```
-                     ORCHESTRATOR
-                (owns ClusteringState, routes turns, writes AuditLog, enforces turn budget)
-                        |
-          +-------------+-------------+
-          |             |             |
-   ClusteringAgent  OracleAgent   JudgeAgent
-   (read/write)     (read-only)   (read-only)
-```
+See [FEATURES.md](FEATURES.md) Part A. Five new features, each tagged EXTEND (modifies existing code) or NEW (new subsystem). The EXTEND/NEW split is the most actionable finding for sequencing: most of the milestone reuses existing code.
 
-The Orchestrator is a thin coordinator — no LLM calls, no strategic decisions. Only the ClusteringAgent proposes state mutations. Oracle and Judge are read-only consumers. This makes each component independently testable and ablation-reproducible.
+**EXTEND existing code (lower risk):**
+- **Query filter** — EXTENDS `feedback_parser` + `_contradicts`; only genuinely new code is a `normalize(deltas)` pass (dedupe, latest-intent-wins within batch, compound-split). Do NOT build a parallel parser.
+- **Versioned YAML oracle config** — EXTENDS `OracleAgent`, externalizes the currently-inline `_build_system_prompt`.
+- **Interactive UMAP recolor** — EXTENDS the existing server-side projection + `state_update` emit; generalizes the coord cache already present in study/watch workers.
+- **Real-time chat view** — EXTENDS `/study` + `/watch` routes; presentation layer over the existing event stream (never a parser-bypass side channel).
 
-### Turn flow (each iteration)
+**Genuinely NEW subsystems (higher risk):**
+- **Oracle-initiated onboarding + initial query** — NEW orchestration around the existing loop (dataset intro -> first query -> first clustering -> converge); keep "autonomous-first" as an ablation condition.
+- **Coordination agent** — NEW orchestrator-worker layer (pairwise decompose -> N `run_conversation` sessions -> contradiction-validated recombine); HIGH complexity, deferred to last.
 
-```
-1. ClusteringAgent.f_next_best_step(state)  ->  Action {show|ask|stop}
-2. OracleAgent.respond(action, state)       ->  OracleReply {feedback_type, structured_delta, load_estimate}
-3. ClusteringAgent.f_next_state(state, reply) -> NEW ClusteringState (immutable update)
-4. Orchestrator applies new state
-5. JudgeAgent.f_eval(state)                ->  EvalResult {continue, convergence_signal, metrics}
-6. AuditLog.append(TurnRecord)
-7. If not continue OR budget exhausted -> ExperimentComplete
-```
+**Must have (table stakes for the milestone):** dataset introduction/summary; oracle initial query driving the first KMeans re-fit; query validated/normalized before clustering; live recolor view; real-time chat transcript; latest-intent-wins honored at query time.
 
-### Key data structures
+**Anti-features to keep OUT:** re-embed-per-query (re-FIT only, embeddings fixed — locked); query filter that semantically "fixes"/second-guesses oracle intent (normalize structure only — the oracle IS ground truth); automatic K optimization triggered by query (K from oracle intent only); always-on parallel coordination (gate to genuinely decomposable ops); free-form chat that bypasses the parser/filter; eventlet/gevent.
 
-- `ClusteringState`: clusters (id, name, description, members), soft assignments (per-point distribution + entropy + is_boundary flag), PreferenceModel (constraints, synonyms, feature weights, drift_history), turn_history, turn_budget, codified_mapping
-- `Action`: type (show_full | show_subset | show_boundary | ask_pairwise | ask_merge_confirm | ask_name | stop), payload, rationale, strategy_id
-- `OracleReply`: feedback_type, content, structured_delta, load_estimate, persona_consistency_score
-- `EvalResult`: continue_loop, convergence_signal (none | weak | strong | explicit_stop), metrics bundle, stopping_reason
-- `TurnRecord`: turn index, Action, OracleReply, EvalResult, load_spent, cumulative_load
+### Architecture Approach
 
-### Ablation axis: Strategy interface
+See [ARCHITECTURE.md](ARCHITECTURE.md). Every v2 feature hooks into one of five named existing seams: the `backend` parameter of `build_initial_clustering_state`; the `post_turn_callback(new_state, deltas)` hook; the `EMBEDDING_DIM` constant; the `parse_feedback(...) -> deltas` step; and `ClusteringState` as single source of truth. The two architectural pillars are a **clean artifact contract** (Colab is a pure producer, the local app a pure consumer — the boundary is a directory of files validated by a manifest, NOT shared code; the local runtime imports zero Colab-only deps) and **preserving the single-state / single-writer / single-replay-log invariants** through every change (the coordination agent is the only feature that stresses these, and must keep ONE authoritative state with sub-sessions running in the existing no-I/O `run_conversation` mode).
 
-`f_next_best_step` dispatches to a Strategy object. All strategies implement `select_action(state) -> Action`. The Orchestrator never references strategy names. Planned strategies: RandomStrategy (baseline), UncertaintyStrategy, InformationGainStrategy, BudgetAwareStrategy, HybridStrategy.
+**Major components (new/modified):**
+1. `src/embedding_backend.py` (NEW) — `EmbeddingBackend` Protocol mirroring `ClusteringBackend`, with `SentenceTransformerBackend` (384) and `OpenAIEmbeddingBackend` (1536) impls; dim is a property of the instance, not a constant.
+2. `src/artifacts.py` + `manifest.json` (NEW) — Colab artifact loader/validator; the manifest provenance schema (model, dim, normalized, versions, input hash, n_items) is the shared dependency of both Colab artifacts and the embedding backends.
+3. `rebuild_state_from_refit` helper + Step 5.5 in `run_conversation` (MODIFIED) — per-query KMeans re-fit on `store.get_all()` (read-only), with the cluster-ID alignment step.
+4. `src/query_filter.py` (NEW) — pre-parse NL normalization stage between `oracle.reply()` and `parse_feedback`.
+5. Pre-loop bootstrap block (MODIFIED `build_initial_clustering_state` with `defer=True`) — oracle-initiated entry.
+6. Coordination agent + pure `merge(authoritative, [sub_results])` (NEW) — orchestrator-worker layer above `run_conversation`; built last.
+7. Projection helpers (MODIFIED) — `_should_recompute_projection` -> `_should_recolor`; compute coords once, recolor on any cluster change.
 
-### Cognitive load model (computed deterministically before LLM call)
+### Critical Pitfalls
 
-```
-load(action) = w_items * count(items_shown) + w_clust * count(clusters_shown)
-             + w_text * text_length_tokens + w_q_type * question_complexity
-```
+See [PITFALLS.md](PITFALLS.md). Top items, with prevention:
 
-Weights are hyperparameters (defaults from literature). Oracle Agent receives cumulative load as a system prompt fact; responds more superficially when load exceeds 0.7 of budget.
+1. **Cluster-ID churn on every re-fit (THE linchpin risk)** — KMeans labels are arbitrary between fits, so naive re-fit breaks merge/split history, cluster names, and the UMAP recolor. Avoid with a Hungarian alignment step (`scipy.optimize.linear_sum_assignment` on item-set overlap / centroid cosine) that preserves old IDs/names for matched clusters; mint new IDs only when K genuinely increased via oracle intent. The UMAP recolor phase hard-depends on this.
+2. **Unintentional K drift during re-fit** — re-instantiating the backend per query can re-run BIC K-selection, violating "K changes ONLY via oracle intent." Persist K in `ClusteringState`/session, pass it in explicitly on re-fit, assert `new_k == prev_k` unless feedback was split/merge; reach BIC only at the first clustering.
+3. **Embedding dim mismatch (384 vs 1536) + normalization mismatch** — do not "remove the assert"; thread real dim + model + `normalized` flag through artifact metadata and assert on load. Normalize at every backend boundary (assert unit norm); never compare distances/BIC across normalization regimes. The mapping layer must re-embed with the SAME model that produced the stored vectors.
+4. **OpenAI cost / rate-limit / no-cache** — batch <=2048 inputs (<=8192 tokens each), retry-with-backoff at the API boundary only, content-hash cache keyed by `sha256(text+model_id)`; never embed inside the turn loop. Colab is where bulk embedding should run.
+5. **Colab artifact version skew / truncation** — ship a provenance sidecar and assert dtype `float32`, shape `(N, dim)`, dim/model/lib-version match, and input hash on load; write artifacts atomically (temp -> fsync -> rename); assert `len(records) == n_items`.
+6. **Coordination agent state-merge / partial failure** — define ONE authoritative `ClusteringState`; sub-sessions produce proposals applied sequentially through the single-writer pipeline; on partial failure abort the WHOLE op (no partial merge), recover from the last good audit-log state; never reach for eventlet/gevent.
 
-### Framework note
+## Implications for Roadmap
 
-ARCHITECTURE.md recommends plain Python (dataclasses + while loop) over LangGraph for the turn loop because the conversation graph is fixed and sequential. LangGraph's graph serialization adds dependency weight without benefit when the ablation axis is a Strategy object, not a graph topology change. Use LangGraph if a 4th agent with conditional branching is added. This is a deliberate trade-off: prioritize reproducibility and debuggability over framework features.
+The three technical researchers converged on a single dependency-locked build order. Phases are numbered 7-12 (continuing from v1's phases 1-6).
 
----
+### Phase 7: Pluggable embedding backends + dynamic dimension [FOUNDATIONAL — do FIRST]
+**Rationale:** `EMBEDDING_DIM = 384` is a module constant asserted in 4+ sites in `embedding_store.py` and 3 cache-shape sites in `web/app.py`; a second model (OpenAI 1536) cannot coexist with it, and a stale 1536-dim cache could be silently reused as 384. Everything embedding-related is blocked until this lands.
+**Delivers:** `EmbeddingBackend` Protocol + ST/OpenAI impls; `store.dim` learned from data; cache files keyed by model name; normalize-at-boundary contract (assert unit norm); content-hash embedding cache; provenance metadata schema.
+**Uses:** `openai` SDK (reuse `build_client`), `pydantic`, numpy `.npy`.
+**Avoids:** Pitfalls 4 (dim mismatch), 5 (normalization mismatch), 6 (OpenAI cost/cache).
 
-## 4. Critical Pitfalls
+### Phase 8: Colab compute-only artifact pipeline
+**Rationale:** The Colab manifest must record `embedding_dim`; building it before Phase 7 would bake in 384 again. Local torch is CPU-only, so GPU offload is the motivation.
+**Delivers:** `src/artifacts.py` loader, `manifest.json` contract (shares Phase 7's provenance schema), HF Hub handoff, web-worker `colab_import` branch; atomic writes + `n_items` assert.
+**Uses:** `huggingface_hub`, `requirements-colab.txt` mirroring local versions.
+**Avoids:** Pitfalls 7 (version skew), 8 (truncation/GPU variance), 2 (sklearn `n_init`/seed pinning Colab==local).
 
-The top 5 mistakes that will invalidate research claims or force a rewrite.
+### Phase 9: Interactive UMAP cache-once / recolor [prereq for re-fit]
+**Rationale:** Per-query re-fit changes every cluster ID, so the projection must recolor not refit; coords are a fixed function of immutable embeddings. This capability must exist before re-fit lands.
+**Delivers:** `_should_recompute_projection` -> `_should_recolor`; compute coords once (ideally in Colab artifact), recolor payload on any cluster change.
+**Implements:** generalizes the coord cache already in study/watch workers.
+**Avoids:** Pitfall 11 (stale UMAP geometry / layout jitter). NOTE: hard-depends on the ID-stability alignment from Phase 11 to be correct — coordinate sequencing carefully (see Ordering Rationale).
 
-### Pitfall 1: Evaluation measures clustering quality, not dialogue contribution
+### Phase 10: Oracle-initiated flow + drop HDBSCAN (KMeans-only)
+**Rationale:** The milestone's central reframe (cluster on demand, not autonomously); the first clustering becomes the first oracle-driven re-fit, so this naturally precedes/pairs with re-fit. Re-fit semantics are KMeans-specific (HDBSCAN has no fixed-K re-fit), so KMeans-only must settle here.
+**Delivers:** pre-loop bootstrap block (`defer=True` placeholder state -> intro -> first query -> first fit); intro written to `events.jsonl` sidecar (not an audit state line); KMeans-only interactive default; "autonomous-first" retained as ablation.
+**Addresses:** dataset introduction, oracle initial query (FEATURES table stakes).
+**Avoids:** Pitfall 9 (empty/degenerate first query — needs a documented default + assert-before-first-clustering).
 
-If NMI / ARI / silhouette are the primary metrics, the dialogue is decorative. Any improvement can come from the embedding + algorithm without oracle interaction. The system becomes an expensive wrapper around HDBSCAN.
+### Phase 11: Re-fit KMeans per query + query filter [THE engineering core]
+**Rationale:** Depends on Phase 10 (oracle-initiated first fit) and Phase 9 (recolor). This is where the linchpin cluster-ID alignment layer is built.
+**Delivers:** Step 5.5 re-fit on `store.get_all()` (embeddings FIXED); Hungarian ID-alignment layer; K-gating (BIC only at first clustering, assert K unchanged unless split/merge); `src/query_filter.py` (pre-parse NL normalization, EXTENDS `feedback_parser`/`_contradicts`); determinism test.
+**Addresses:** query filter, oracle query -> first re-fit (FEATURES table stakes/differentiators).
+**Avoids:** Pitfalls 1 (ID churn), 2 (nondeterminism), 3 (K drift), 10 (over-filtering / contradiction double-handling — filter normalizes, feedback layer arbitrates).
 
-**Prevention:** Define three baseline conditions before writing any interaction code: (A) no dialogue (one-shot clustering), (B) random interaction (uninformative oracle), (C) full system. Primary metrics are turn-efficiency (turns to oracle satisfaction threshold), cognitive load per turn, and satisfaction at fixed budgets. Run the ablation where `f_next_best_step` is replaced with random action selection and verify degradation. If metrics do not degrade, the policy is not contributing. The Judge Agent's `f_eval` must be fully specified before Phase 2 begins.
+### Phase 12: Coordination agent (N parallel sessions) [LAST — needs own research spike]
+**Rationale:** Highest risk; breaks single-state/single-writer cardinality; locked as last. Build only after F1-F5 + recolor stabilize.
+**Delivers:** orchestrator-worker layer above `run_conversation`; pure `merge()` reduce; sub-sessions run in existing no-I/O mode (`db_conn=None, socketio=None`); ONE authoritative state + ONE audit line per merged turn.
+**Avoids:** Pitfall 12 (state-merge conflicts / partial-failure -> abort whole op; no eventlet/gevent; `threading.Thread` per sub-session, mind BLAS oversubscription).
 
-### Pitfall 2: LLM oracle is too consistent, too cooperative, and too helpful
-
-LLMs exhibit ~58% sycophancy rates in simulated evaluation (SycEval 2025). An oracle prompted to be "satisfied" will converge faster and more smoothly than any real human. The contradiction-handling and preference-drift components will never be stress-tested. The human validation study will reveal the gap at the worst possible time.
-
-**Prevention:** Oracle Agent must have explicit configurable parameters from the first working prototype: `consistency_rate`, `preference_drift_probability`, `sycophancy_resistance`, `fatigue_model` (increasing brevity after N turns). Include at least one "adversarial oracle" persona: contradictory preferences, high drift, low cooperation. Run the human validation study before finalizing quantitative claims — treat the simulated-vs-human gap as a reported finding, not a footnote.
-
-### Pitfall 3: Soft assignments are uncalibrated — `f_uncertainty` is broken
-
-HDBSCAN `probabilities_` and softmax-over-distances are systematically overconfident. A point assigned with 0.9 confidence is not actually a 90% likely cluster member. `f_uncertainty` built on raw soft assignments will surface the wrong points for oracle clarification.
-
-**Prevention:** Apply temperature scaling post-hoc to soft assignments as a standard calibration step. Include a reliability diagram (or at minimum expected calibration error, ECE) as a reported metric. Maintain a pairwise validation set of 50-100 point pairs where the oracle has stated membership judgments; verify that soft assignment ordering is consistent with oracle judgments. This must be part of Phase 1 evaluation, not added later.
-
-### Pitfall 4: State management complexity collapses across turns
-
-Multi-turn LLM agents show a documented 39% average performance drop vs. single-turn (GPT-4o drops to ~14% accuracy in complex multi-turn scenarios). State stored only in conversation context will silently degrade after 20+ turns. Cascading updates (merge two clusters -> must update soft assignments, descriptions, hierarchy, uncertainty surface) introduce bugs that are invisible until late sessions.
-
-**Prevention:** Define a typed `ClusteringState` schema as the very first code artifact. The state schema is a data structure, not a prompt. Serialize state to disk after every turn (enables session replay, surfaces state bugs early). Inject only a structured state summary (under 500 tokens) into the context window — not the full history. Test state integrity at turn 20, 30, 50 with a synthetic oracle before any human study runs.
-
-### Pitfall 5: Contradiction / preference-drift handling is logged but never validated
-
-The "latest intent wins" policy requires that when the oracle contradicts a prior preference, all downstream state (soft assignments, descriptions, cluster membership, hierarchy) updates to reflect the new intent — not just the preference log. The common failure mode is partial state updates that produce the appearance of contradiction handling while silently accumulating stale, conflicting state.
-
-**Prevention:** After each state update, run a programmatic consistency check: all active constraints must be satisfiable with the current partition. Write contradiction injection tests: force "put X in cluster A" then "put X in cluster B" and assert that final state, soft assignments, and descriptions all reflect the second instruction. Make preference drift an active `f_next_best_step` signal: when drift exceeds a threshold, ask a clarifying question. This is also what makes the drift metric meaningful and measurable.
-
----
-
-## 5. Phase Build Order Recommendation
-
-Derived from dependency chains in FEATURES.md, build order in ARCHITECTURE.md, and phase-timing warnings in PITFALLS.md.
-
-### Phase 0 — Obligations before first line of code (1-2 days)
-
-**Rationale:** Four decisions are irreversible once development begins. Deferring them creates either contaminated evaluation data or invalidated claims.
-
-- Lock and hash the held-out evaluation subset. Write its path and hash to a file that is never modified.
-- Define the primary quantified claim with required sample size for a meaningful 95% CI: e.g., "uncertainty-driven strategy reaches oracle satisfaction in fewer turns than random baseline (N = 27 runs: 3 strategies x 3 personas x 3 seeds)."
-- Write the human validation study protocol (within-subject, counterbalanced, session duration limit 30-45 min, NASA-TLX or simplified Likert, consent procedures).
-- Specify the three independently operationalized stopping criteria (turn budget hard cap, state-change diminishing returns threshold, structured oracle satisfaction token).
-
-**Research flag:** This phase has no standard pattern. Requires team alignment, not implementation.
-
-### Phase 1 — Foundation: data structures and embedding infrastructure (3-5 days)
-
-**Rationale:** Everything downstream depends on EmbeddingStore and ClusteringState. Building agents before the state schema is stable causes cascading rewrites.
-
-- EmbeddingStore: load dataset (Amazon Reviews / IMDB via HuggingFace `datasets`), compute sentence-transformers embeddings once, expose nearest-neighbor queries. Read-only singleton after init.
-- ClusteringState dataclasses: all data structures from ARCHITECTURE.md. Pydantic validation for structured fields.
-- Initial HDBSCAN pass: populate first ClusteringState with cluster labels, soft assignments, descriptions (LLM-generated). Verify `probabilities_` calibration with reliability diagram.
-- AuditLog: append-only JSONL writer + reader.
-
-**Gate:** Can serialize a valid ClusteringState from a real dataset and read it back without loss.
-**Research flag:** HDBSCAN soft-assignment sufficiency (sklearn `probabilities_` vs. standalone `hdbscan` full multinomial vectors) must be decided here. Do not defer.
-
-### Phase 2 — Clustering Agent core logic (no LLM yet) (3-5 days)
-
-**Rationale:** The agent's pure functions (`f_uncertainty`, `f_next_state`, RandomStrategy) can be written and tested without any LLM calls. Validating them in isolation prevents LLM variability from masking logic bugs.
-
-- `f_output`: return current clustering (trivial initially).
-- `f_uncertainty`: compute calibrated entropy from soft assignments; rank boundary points, split candidates, merge candidates, unresolved contradictions.
-- `RandomStrategy`: `f_next_best_step` with random action selection. Testable with mocked oracle replies.
-- `f_next_state`: parse a hardcoded OracleReply and produce a new ClusteringState.
-
-**Gate:** Full turn loop runs with random strategy and mocked oracle replies. State evolves correctly across 30+ turns. State integrity tests pass.
-**Research flag:** Standard patterns apply; no deeper research needed.
-
-### Phase 3 — Oracle Agent (4-6 days)
-
-**Rationale:** The Oracle is the most research-sensitive component. Its noise parameterization must be correct before any simulation results are recorded, or all ablation data is invalid.
-
-- OracleAgent base: LLM call with system prompt (persona spec + preference history + cognitive-load state), returns structured OracleReply.
-- Cognitive load calculator: deterministic `load(action)` from payload. Computed before LLM call; injected as system prompt fact.
-- Preference drift detection: parse `DRIFT:` markers; update PreferenceModel.drift_history. Latest intent overwrites constraint; history preserved.
-- Persona config loader: JSON persona spec including `consistency_rate`, `preference_drift_probability`, `sycophancy_resistance`, `cognitive_decay_rate`.
-- Adversarial oracle persona: contradictory preferences, high drift, low cooperation. Run loop with this persona to stress-test contradiction handling.
-
-**Gate:** Oracle produces valid OracleReply for each Action type; drift markers are parsed and logged; consistency_rate and drift_probability params produce measurably different behavior in simulation runs.
-**Research flag:** Oracle cognitive-load modeling is MEDIUM confidence (active research area). May need literature check on load weight parameters.
-
-### Phase 4 — Judge Agent and Orchestrator (3-4 days)
-
-**Rationale:** With three independent stopping criteria operationalized (Phase 0), the Judge can be built to test each independently. Budget enforcement belongs in the Orchestrator.
-
-- JudgeAgent.f_eval: convergence signal logic (explicit satisfaction, feedback magnitude decay, preference stability, diminishing returns, budget exhaustion). Metric bundle per turn.
-- Feedback magnitude tracker: `|structured_delta|` across last N turns.
-- Budget enforcement in Orchestrator: turn count, budget check, ExperimentComplete termination.
-- Oracle validity checks: persona_consistency_score drops, oracle_stuck warnings.
-
-**Gate:** Judge terminates the loop correctly under all five stopping conditions. Each stopping criterion can be triggered independently by a synthetic oracle.
-**Research flag:** Standard patterns apply.
-
-### Phase 5 — Real Strategies and Ablation-Ready Loop (4-6 days)
-
-**Rationale:** Once Oracle, Judge, and RandomStrategy are validated, non-random strategies can be added against a known baseline. Full integration test required before ablation runner.
-
-- UncertaintyStrategy: select highest-entropy (calibrated) point; prefer ask_pairwise.
-- InformationGainStrategy: estimate entropy reduction per action type; select max.
-- BudgetAwareStrategy: modulate action type by remaining turn budget.
-- HybridStrategy: combine uncertainty + cluster representativeness.
-- Full integration test: all strategies through a complete loop with the adversarial oracle persona.
-
-**Gate:** All strategies run through full loop. AuditLog shows strategy_id on every turn. Metrics are strategy-attributable.
-**Research flag:** Information-gain estimation for LLM-based actions may need deeper research — how to estimate entropy reduction before making the oracle call.
-
-### Phase 6 — Ablation Harness and Evaluation (5-8 days)
-
-**Rationale:** Harness must enforce full crossing (strategies x personas x seeds) to avoid confounded conditions. Analysis must read AuditLog only; no internal agent state.
-
-- Experiment config loader (JSON): strategy, oracle_persona, dataset, turn_budget, random_seed, replications.
-- Multi-run executor: N replications per condition, consistent seeds, parallelizable via multiprocessing.
-- Migrate to MLflow for run tracking and comparison.
-- Analysis scripts: read AuditLog only; compute turns-to-convergence, cognitive load per turn, contradiction rate, preference stability; bootstrap 95% CIs.
-- Introduce pairwise validation probes (straightforward given AuditLog).
-- Persona-varied oracle experiments (parameter sweep using existing Oracle Agent).
-
-**Gate:** Ablation table is reproducible from AuditLog + config file alone. Primary quantified claim with 95% CI is computable.
-**Research flag:** Minimum crossing: 3 strategies x 3 oracle personas x 3 dataset seeds = 27 runs. Feasible with LLM oracles at gpt-4o-mini cost.
-
-### Phase 7 — Generalization and Human Validation (5-7 days)
-
-**Rationale:** Both depend on all prior phases being stable and the held-out set being clean (locked in Phase 0).
-
-- Generalization function: derive codified preference classifier/rule set from accumulated preference log; evaluate accuracy on frozen held-out subset.
-- Preference codification quality metric: oracle re-labels 20-30 held-out items; compare to preference-function predictions.
-- Human validation study: execute pre-written protocol (Phase 0); 2-person pilot first; compare simulated vs. human convergence patterns as a reported finding.
-- Confidence interval sweep: ensure all headline claims meet 95% CI requirement.
-
-**Gate:** Human study is complete; simulated-vs-human gap is quantified and reported; all headline claims have defensible CIs.
-**Research flag:** Human study protocol written in Phase 0; no additional research needed. Generalization function design may need one implementation spike.
-
----
-
-## 6. Open Questions
-
-Decisions that are unresolved and must be answered early to avoid rework.
-
-| Question | Why It Must Be Answered Early | When to Decide |
-|----------|------------------------------|---------------|
-| Does sklearn HDBSCAN `probabilities_` (scalar membership strength) satisfy the soft-assignment requirement, or is the full multinomial distribution from the standalone `hdbscan` package's `all_points_membership_vectors()` needed? | Determines which package is used; changes the SoftAssignment data structure and `f_uncertainty` computation. Retrofitting mid-project cascades through state schema. | Phase 1 gate |
-| What are the oracle cognitive-load weight parameters (w_items, w_clust, w_text, w_q_type)? Are the literature defaults empirically defensible for this interaction design? | Cognitive load is both a design constraint (per-turn cap) and a primary metric. Wrong weights produce a broken metric that is invisible until the human study. | Phase 3; may need targeted literature search |
-| Is the information-gain estimate for `f_next_best_step` computable cheaply (entropy over current soft assignments) or does it require a model-dependent prior (information-theoretic estimate of what a pairwise query reveals)? | Determines whether InformationGainStrategy is implementable within the project scope or must be approximated. | Phase 5 start |
-| What dataset will be used as the primary ablation target — Amazon Reviews 2023, IMDB, or support tickets — and is a ground-truth label set available for calibration and generalization evaluation? | The held-out split must be locked before code runs. Ground truth (even noisy) enables reliability diagram computation and NMI as a secondary diagnostic metric. | Phase 0 |
-| Should the Orchestrator be implemented in LangGraph or plain Python? ARCHITECTURE.md recommends plain Python for the fixed sequential graph; STACK.md recommends LangGraph for HITL interrupts and durable checkpointing. | This is a build-vs-buy trade-off. The decision affects how HITL pausing is implemented and whether the system can checkpoint mid-session for the human study. | Before Phase 2 |
-| What is the operationalized definition of "oracle satisfaction" for the stopping signal — a structured `DONE` token in OracleReply, a turn where `|structured_delta| == 0`, or an LLM self-report? | Three stopping criteria are required; this determines one of them. Circular definitions (oracle both gives feedback and determines when to stop) invalidate the convergence metric. | Phase 0 |
-| What is the maximum acceptable turns-to-convergence budget for the human study, given a 30-45 minute session limit and cognitive-load cap per turn? | Determines the turn budget hyperparameter used across all ablation conditions. Inconsistent turn budgets between simulated and human conditions make comparison invalid. | Phase 0 / human study protocol |
-
----
+### Phase Ordering Rationale
+
+- **F2 (dynamic dim) before everything embedding-related** — the `EMBEDDING_DIM` constant gates pluggable backends AND silently gates cache reuse; a second model cannot coexist with it. Named foundational prerequisite #1.
+- **The provenance/manifest schema (foundational prerequisite #2)** is defined in Phase 7 and consumed by Phase 8 (Colab) — both the artifact pipeline and the embedding backends validate against it (model, dim, normalized, versions, input hash).
+- **F1 (Colab) after F2** — the manifest must record `embedding_dim`; building Colab first re-bakes 384.
+- **Recolor before re-fit** — re-fit changes all cluster IDs, so the projection must recolor-not-refit; that capability (Phase 9) is a prerequisite for Phase 11.
+- **Oracle-initiated + KMeans-only before re-fit-per-query** — the first clustering becomes the first oracle-driven re-fit; re-fit is KMeans-specific.
+- **Coordination agent last** — locked decision; highest risk; needs the rest stable.
+- **Note on a cross-phase dependency:** Phase 9 (recolor) is correct ONLY once the Phase 11 ID-alignment layer exists (recolor with churned IDs shows wrong colors). The two researchers ordered these slightly differently (architecture put recolor at 9; pitfalls put ID-stability at 9). The roadmapper should either (a) build the recolor mechanism in Phase 9 but defer its correctness-validation until the alignment lands in Phase 11, or (b) pull the ID-alignment layer forward to sit with re-fit and validate recolor immediately after. Flag this coupling explicitly when planning.
+
+### Research Flags
+
+Phases likely needing a deeper `/gsd-research-phase` spike during planning:
+- **Phase 12 (Coordination agent):** explicitly flagged by all three technical researchers for its own deep-research spike — cross-session state-merge semantics, contradiction recombination across N sessions, partial-failure rollback, and BLAS/thread-pool contention under N concurrent KMeans fits are unresolved design problems, not mechanics.
+- **Phase 11 (Re-fit + ID alignment):** the cluster-ID reconciliation policy (preserve-stable-IDs vs. renumber) and the hierarchy-lineage gap (a wholesale re-fit has no clean split/merge lineage) are genuine design decisions worth a focused planning pass.
+
+Phases with standard/well-documented patterns (likely skip research-phase):
+- **Phase 7 (backends):** Protocol mirrors the existing `ClusteringBackend`; OpenAI/HF APIs documented and version-verified.
+- **Phase 9 (UMAP recolor):** the cache-once/recolor pattern is standard and the cache half-exists already.
+- **Phase 10 (oracle-initiated):** orchestration around the existing loop; HITL onboarding patterns are well-attested.
 
 ## Confidence Assessment
 
-| Research Area | Confidence | Basis |
-|---------------|------------|-------|
-| Stack (LangGraph, sentence-transformers, HDBSCAN, Typer+Rich) | HIGH | Ecosystem defaults as of 2026; multiple corroborating sources |
-| Features (table stakes, dependency order, anti-features) | HIGH | Grounded in COBRAS, Prodigy, active learning literature; HIGH-confidence primary sources |
-| Architecture (supervisor pattern, data structures, ablation axis) | HIGH | Well-established patterns; supervisor/coordinator is documented in production multi-agent systems |
-| Oracle cognitive-load modeling | MEDIUM | Active research area; load weight parameters are literature defaults, not empirically validated for this design |
-| LLM sycophancy mitigation parameters | MEDIUM | SycEval 2025 documents the problem; specific mitigation parameters (consistency_rate thresholds) are heuristic |
-| Soft-assignment calibration | MEDIUM | Temperature scaling is well-validated for supervised classifiers; direct application to HDBSCAN probabilities is underexplored |
-| Preference drift handling | MEDIUM-LOW | Under-studied: "No IDM technique has been explicitly designed to handle preference drift" (PITFALLS.md source) |
+| Area | Confidence | Notes |
+|------|------------|-------|
+| Stack | HIGH | All key versions probed against the live local interpreter + verified against current PyPI/official docs (2026-05-21). |
+| Features | MEDIUM-HIGH | Orchestrator/onboarding/intent patterns verified against multiple sources; UMAP-recolor and chat-view detail are LOWER (UMAP docs + implementation common-sense). |
+| Architecture | HIGH | Grounded in direct reading of the existing codebase; integration seams verified against actual source (`conversation_loop.py`, `clustering.py`, `embedding_store.py`, `web/app.py`, etc.). |
+| Pitfalls | HIGH (code-grounded) / MEDIUM (external API) | Code pitfalls verified by reading `src/`; OpenAI/sentence-transformers behavior verified against docs. |
 
-**Gaps requiring attention during planning or early implementation:**
-- sklearn HDBSCAN soft-assignment sufficiency (resolve at Phase 1)
-- Oracle load weight calibration (resolve at Phase 3, possibly with a targeted literature search)
-- Orchestrator framework decision: LangGraph vs. plain Python (resolve before Phase 2)
-- Primary dataset selection and ground-truth availability (resolve at Phase 0)
+**Overall confidence:** HIGH
+
+### Gaps to Address
+
+- **Cluster-ID reconciliation policy** — preserve-stable-IDs (Jaccard/centroid match) vs. renumber is a design decision to settle in Phase 11 planning; affects merge/split history, names, and recolor correctness.
+- **Hierarchy lineage on wholesale re-fit** — `record_split/merge` assume incremental edits; a re-fit has no clean lineage. Decide: reset hierarchy on re-fit, or skip hierarchy recording for re-fit turns (Phase 11).
+- **Intro-turn audit semantics** — is the oracle-initiated intro turn 0, turn -1, or an `events.jsonl` sidecar record? Suggested: sidecar, not an audit state line (Phase 10).
+- **Coordination merge semantics** — the whole sub-state -> authoritative-state merge contract is unresolved and needs the Phase 12 spike (the only HIGH-risk gap).
+- **Recolor/alignment cross-phase coupling** — recolor (Phase 9) is correct only with ID alignment (Phase 11); resolve the sequencing during roadmap planning (see Ordering Rationale).
+- **`requirements.txt` drift** — bump stale floors (`sentence-transformers>=2.7` -> `>=5.4`, `openai>=1.30` -> `>=2.26,<3`, pin `huggingface_hub>=1.7,<2`); pre-existing `EMBEDDING_DIM`/docstring drift (docstrings say 768, constant is 384) — clean up during Phase 7.
+
+## Sources
+
+### Primary (HIGH confidence)
+- Direct source reading: `src/conversation_loop.py`, `src/clustering.py`, `src/embedding_store.py`, `src/agent_functions.py`, `src/feedback_parser.py`, `src/feedback.py`, `src/state.py`, `src/mapping.py`, `web/app.py` — loop seams, `EMBEDDING_DIM` sites, KMeans determinism, ID remap, contradiction policy.
+- Live local interpreter probe (2026-05-21) — exact installed versions incl. torch 2.11.0+cpu.
+- OpenAI API docs — `text-embedding-3-small` 1536-dim, `dimensions` param, <=2048 inputs / 8192 tokens, unit-normalized output.
+- huggingface_hub PyPI + v1.0 blog — upload/download API, httpx migration, `cached_download` removal.
+- ruamel.yaml PyPI — round-trip comment/order preservation.
+- OpenAI Agents SDK — planner/worker decomposition.
+- UMAP docs — recolor-by-label, precompute+transform vs refit.
+- `.planning/PROJECT.md` + `CLAUDE.md` — locked decisions, K-only-via-oracle anti-feature, no-eventlet/gevent, audit-log-as-replay-source, fail-loudly.
+
+### Secondary (MEDIUM confidence)
+- IPBC (interactive projection-based HITL clustering) — orientation + projection stability.
+- AstronomicAL — onboarding/orient-then-query workflow.
+- Multi-agent orchestration pattern surveys — orchestrator-worker (~70% of prod deployments), fan-out/fan-in.
+- Text-to-SQL / intent-normalization references — NL -> structured-command translation.
+- sentence-transformers/all-MiniLM-L6-v2 model card — 384-dim, L2-normalized via Normalize module.
+
+### Tertiary (LOW confidence)
+- UMAP recolor and chat-view implementation detail — partly implementation common-sense beyond what the cited docs cover; validate during Phase 9 planning.
 
 ---
-
-## Sources (aggregated)
-
-**HIGH confidence:**
-- LangGraph GitHub (v1.1.10, April 2026): https://github.com/langchain-ai/langgraph
-- scikit-learn HDBSCAN docs (1.8.0): https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html
-- COBRAS paper PDF (DTAI): https://dtai.cs.kuleuven.be/software/cobras/cobras_ida_cameraready.pdf
-- Large Language Models Enable Few-Shot Clustering (TACL/MIT Press): https://direct.mit.edu/tacl/article/doi/10.1162/tacl_a_00648/
-- Semi-supervised constrained clustering review (Springer AI Review 2024): https://link.springer.com/article/10.1007/s10462-024-11103-8
-- Prodigy annotation tool: https://explosion.ai/blog/prodigy-annotation-tool-active-learning
-- HITL machine learning state of the art (Springer, 2022): https://link.springer.com/article/10.1007/s10462-022-10246-w
-- Multi-agent architecture patterns: https://arxiv.org/html/2601.13671v1
-- Text Clustering with LLM Embeddings: https://arxiv.org/html/2403.15112v5
-
-**MEDIUM confidence:**
-- SycEval: LLM Sycophancy Evaluation (2025): https://arxiv.org/html/2502.08177v2
-- LLMs Get Lost In Multi-Turn Conversation: https://arxiv.org/html/2505.06120v1
-- Towards Calibrated Deep Clustering Network: https://arxiv.org/html/2403.02998v2
-- Cognitive load in LLM conversations: https://arxiv.org/pdf/2505.10742
-- Interactive Clustering comprehensive review (ACM, 2020, 105 papers): https://dl.acm.org/doi/fullHtml/10.1145/3340960
-- Do We Still Need Humans in the Loop? (arXiv 2604.13899): https://arxiv.org/html/2604.13899
-
-**LOW confidence (abstract only or blog):**
-- Handling concept drift in preference learning: https://www.researchgate.net/publication/228967853_Handling_concept_drift_in_preference_learning_for_interactive
-- LLM Perception Drift: https://www.stridec.com/blog/llm-perception-drift-why-matters-ai-applications/
+*Research completed: 2026-05-21*
+*Ready for roadmap: yes*

@@ -1,342 +1,350 @@
-# Domain Pitfalls: Conversational HITL Clustering
+# Pitfalls Research
 
-**Domain:** Conversational human-in-the-loop clustering / interactive ML research system
-**Researched:** 2026-04-29
-**Confidence:** HIGH for pitfall identification; MEDIUM for specific mitigations (domain is partially novel)
+**Domain:** Adding compute-offload (Colab), pluggable embedding/clustering backends, per-query re-fit, oracle-initiated flow, query filter, and a coordination agent to an existing conversational-clustering research system (milestone v2.0).
+**Researched:** 2026-05-21
+**Confidence:** HIGH for code-grounded pitfalls (read `src/clustering.py`, `src/embedding_store.py`, `src/state.py`, `src/mapping.py`, `src/feedback.py`); MEDIUM for external-API behavior (verified against OpenAI + sentence-transformers docs).
+
+> **Scope note:** These pitfalls are specific to *adding the v2.0 features to this codebase*, not generic ML mistakes. Every prevention respects the two hard project rules: **K changes ONLY via oracle intent** (no auto K-selection) and **NEVER eventlet/gevent** (they monkey-patch stdlib and corrupt numpy/sklearn/UMAP locking). Phases referenced are the v2.0 phases 7–12.
+
+---
+
+## Phase map used in this document
+
+These are *suggested* phase slots for the roadmapper. Ordering follows the locked decisions (Colab compute-only early; coordination agent last).
+
+| Phase | Working title |
+|-------|---------------|
+| 7 | Pluggable embedding backends + dynamic dim (drop hardcoded 384) |
+| 8 | Colab compute-only artifact pipeline (embeddings + initial clustering) |
+| 9 | KMeans-only + stable per-query re-fit (cluster-ID stability layer) |
+| 10 | Oracle-initiated flow + query filter |
+| 11 | Interactive UMAP with cached coords (recolor-not-refit) |
+| 12 | Coordination agent (N parallel sessions) — highest risk, last |
 
 ---
 
 ## Critical Pitfalls
 
-Mistakes that cause rewrites, invalidate claims, or make the research indefensible.
-
----
-
-### Pitfall 1: Evaluation Measures What Clustering Does by Default, Not What Dialogue Adds
+### Pitfall 1: Cluster IDs churn on every per-query re-fit, silently breaking merge/split history and the UMAP recolor
 
 **What goes wrong:**
-The system is evaluated on final clustering quality (NMI, ARI, silhouette score) or oracle satisfaction without a no-dialogue baseline. Any improvement appears to come from the conversation loop, but the underlying embedding and clustering algorithm may already produce the same result without interaction. The dialogue becomes decorative.
+KMeans assigns cluster *labels* arbitrarily — the cluster that was "id 2" last turn becomes "id 0" this turn even if the geometry barely changed. Worse, `build_initial_clustering_state` re-derives IDs with `enumerate(sorted(set(labels)), start=1)`, so IDs are positional, not semantic. After a per-query re-fit, every downstream structure that keys on cluster id breaks: `MergeFeedback(cluster_a_id, cluster_b_id)`, `SplitFeedback(cluster_id)`, `MoveItemFeedback(target_cluster_id)`, the merge/split lineage, the cluster name carried in `Cluster.name`, and the UMAP recolor (points jump colors for no visible reason). The `Cluster` docstring already promises "id... NEVER reused after deletion (D-11)" — naive re-fit violates this immediately.
 
 **Why it happens:**
-Researchers build the interaction loop first, then reach for standard clustering metrics at evaluation time. Because the loop eventually produces a "good" clustering, the metric looks positive — but the metric was never designed to isolate the dialogue's contribution.
+Developers treat re-fit as "just call `KMeansBackend.fit()` again." KMeans/Lloyd has no notion of label continuity between fits; centroid order depends on init. The existing code never had to solve this because v1 fit once and then applied *deltas* to a stable state.
 
-**Consequences:**
-- No defensible headline claim. Reviewers will ask "does the interaction actually help?" and there is no answer.
-- The core research contribution (efficient preference extraction) is untestable.
-- The system reduces to an expensive wrapper around k-means.
+**How to avoid:**
+Introduce a **cluster-identity alignment step** that runs after every re-fit and maps new clusters back to previous IDs before constructing the new `ClusteringState`. Use the Hungarian algorithm (`scipy.optimize.linear_sum_assignment`) on a cost matrix of overlap (Jaccard of item sets) or centroid cosine distance between old and new clusters. Preserve old IDs, names, and descriptions for matched clusters; only mint a new ID when K genuinely increased via oracle intent. Persist a `previous_state` reference so alignment has something to align against. Keep the existing "id never reused" invariant as an assertion.
 
 **Warning signs:**
-- Evaluation plan lists only clustering-quality metrics (NMI, ARI, silhouette) with no baseline condition.
-- No experiment where the oracle gives zero feedback (cold-start baseline).
-- Metrics do not track turns, cognitive load, or convergence rate.
+Cluster names that no longer match their contents after a query; merge/split throwing `KeyError`/`ValueError` on a cluster_id that "existed last turn"; UMAP colors reshuffling wholesale when only a small region changed; oracle saying "you renamed everything."
 
-**Prevention:**
-- Define at minimum three conditions: (A) no dialogue (one-shot clustering), (B) random interaction (uninformative oracle), (C) full dialogue system.
-- Primary metrics must be turn-efficiency (turns to reach oracle satisfaction threshold), cognitive load per turn (tokens read / decisions asked), and satisfaction at fixed turn budgets — not just final-state clustering quality.
-- Run ablation: remove `f_next_best_step` (replace with random next-action policy) and measure degradation. If metrics do not degrade, the policy is not contributing.
-- The Judge Agent's `f_eval` must be defined before any interaction code is written.
-
-**Phase mapping:** Addressed in the evaluation design phase, before implementing the full interaction loop. If deferred, it becomes unfixable without a complete experiment redesign.
+**Phase to address:** Phase 9 (this is the central engineering risk of per-query re-fit — build the alignment layer here, before UMAP in Phase 11 depends on it).
 
 ---
 
-### Pitfall 2: LLM-Simulated Oracle Is Too Consistent and Too Helpful
+### Pitfall 2: KMeans nondeterminism makes "the same query" produce different clusterings
 
 **What goes wrong:**
-The Oracle Agent, prompted to simulate a human with preferences, produces feedback that is:
-- Perfectly consistent across turns (no realistic ambiguity or preference evolution)
-- Never contradictory (humans contradict themselves ~15-30% of the time in annotation tasks)
-- Over-cooperative (immediately accepts reasonable proposals rather than exploring alternatives)
-- Sycophantic (agrees with the Clustering Agent's framing rather than asserting independent preferences)
-
-The system is then tuned and evaluated against this unrealistically helpful oracle. When real humans interact, the system fails.
+Even with identical embeddings and identical K, two re-fits can produce different assignments because of `n_init` random restarts and `random_state`. The current `KMeansBackend.fit()` hardcodes `random_state=0, n_init=10`, which is good — but a per-query re-fit path that rebuilds the backend, or a Colab-side fit using different sklearn defaults, can drift. Nondeterminism destroys reproducibility (a locked project requirement: "headline claims need CIs", "held-out split locked") and makes the alignment step in Pitfall 1 chase phantom changes.
 
 **Why it happens:**
-LLMs exhibit documented sycophancy rates of ~58% in simulated evaluation scenarios (SycEval, 2025). RLHF-aligned models are trained to be agreeable. When prompted to play a "satisfied user," they lean toward satisfaction. The oracle persona specification rarely includes explicit instruction to be difficult, ambiguous, or to drift preferences over time.
+A new `KMeansBackend()` is instantiated per query (forgetting to pin seed), or sklearn version differs between Colab and local (default `n_init` changed from 10 to `"auto"` in scikit-learn 1.4), or someone "improves" convergence by raising `n_init` without pinning the seed.
 
-**Root cause from research:**
-LLM agents representing groups "display far less variance" than real humans — a "flattening effect." RLHF training decreases linguistic diversity and suppresses natural conversational variance. A simulated oracle will converge faster and more smoothly than a real person because it lacks the fatigue, distraction, inconsistency, and genuinely subjective preference structures that humans exhibit.
-
-**Consequences:**
-- Turns-to-convergence metric is systematically optimistic.
-- Contradiction-handling logic (`latest intent wins`) is never stress-tested because the oracle never contradicts itself.
-- System cannot generalize to real humans; the small human study will reveal the gap at the worst possible time (late in the project).
+**How to avoid:**
+Pin `random_state` everywhere KMeans/GMM is constructed (already done — keep it). Pin the sklearn version in `requirements.txt` and assert it matches on Colab. Add a determinism test: fit twice on the same embeddings + same K, assert identical labels. Log the seed and sklearn version into the AuditLog every turn (the JSONL is the replay source of truth per CLAUDE.md).
 
 **Warning signs:**
-- Oracle Agent has no explicit "noise" or "ambiguity" parameter.
-- Oracle accepts > 80% of proposals in simulation runs.
-- Preference profile never evolves across a session.
-- Oracle never asks a clarifying question unprompted.
+A determinism unit test that flakes; re-running an experiment produces different turn counts; CIs that won't reproduce; alignment step reporting changes when the oracle did nothing.
 
-**Prevention:**
-- Build the Oracle Agent with explicit configurable parameters: `consistency_rate` (0.0–1.0), `preference_drift_probability` (per-turn probability of evolving a stated preference), `sycophancy_resistance` (probability of rejecting a reasonable proposal to explore alternatives), `fatigue_model` (increasing brevity / decreasing engagement after N turns).
-- Include at least one "adversarial oracle" persona: contradictory preferences, high drift, low cooperation.
-- Run the human validation study (N = 5-10) before finalizing any quantitative claims, not after. Use the gap between simulated and human behavior as a reported finding, not a footnote.
-- Document oracle parameterization fully. Claims about convergence speed must specify oracle configuration.
-
-**Phase mapping:** Oracle Agent design. Must be addressed in the first working prototype. Retroactively adding realistic noise after the ablation experiments have run invalidates all simulation results.
+**Phase to address:** Phase 9 (re-fit), with a version-pinning check shared with Phase 8 (Colab).
 
 ---
 
-### Pitfall 3: Soft Assignments Are Not Calibrated — Confidence Does Not Match Reality
+### Pitfall 3: K drifts unintentionally during re-fit — violating "K changes ONLY via oracle intent"
 
 **What goes wrong:**
-The system produces per-point probability distributions over K clusters (soft assignments). These distributions are uncalibrated: a point assigned with 0.9 confidence to cluster A is not actually a 90% likely member of cluster A. Deep clustering methods are specifically known to be severely overconfident — state-of-the-art methods (SCAN, SPICE) exhibit worse calibration than supervised classifiers.
+The current `KMeansBackend` selects K once via BIC in `_select_k_via_bic` then fixes it. A per-query re-fit can accidentally re-run BIC selection (because `self._k` is reset when the backend is recreated per query), silently re-optimizing K every turn. This is the project's explicit **anti-feature** ("Automatic K optimization — anti-feature; K changes only through oracle intent"). It also interacts catastrophically with Pitfall 1: K changing means the alignment cost matrix is non-square and IDs churn legitimately.
 
 **Why it happens:**
-Soft assignments in clustering are often produced by softmax over embedding distances or pseudo-label propagation. Both methods have no calibration guarantee. Pseudo-labeling in particular creates a compounding overconfidence feedback loop: overconfident pseudo-labels train a model that produces even more overconfident outputs.
+`self._k` is instance state; re-instantiating the backend per query loses it and triggers `_select_k_via_bic` again. Or the query filter / global feedback path triggers a "fresh" clustering that forgets the current K.
 
-The oracle, when asked about boundary points, is shown high-confidence assignments and trusts them, even though they are miscalibrated. The system then uses these assignments to decide which points to surface for clarification — but high confidence is not a reliable signal for "this point is correctly placed."
-
-**Consequences:**
-- The system shows the oracle the wrong points (high-confidence wrong assignments instead of low-confidence boundary points).
-- `f_uncertainty` is broken: it selects points to surface based on a confidence signal that is systematically overconfident.
-- Calibration evaluation (reliability diagrams, ECE) will reveal the problem, but only if it is planned.
-- Pairwise validation ("should X and Y be together?") will surface contradictions with stated assignments.
+**How to avoid:**
+Store the current K in the durable `ClusteringState` / session, not only in the backend instance. On re-fit, **pass K in explicitly** (`backend._k = current_k`) and assert K is unchanged unless the triggering feedback was a `SplitFeedback` (K+1) or `MergeFeedback` (K−1). Make BIC selection reachable ONLY on the very first clustering (turn 0 / first oracle query), never on subsequent re-fits. Add an assertion: `assert new_k == prev_k or feedback_changed_k`.
 
 **Warning signs:**
-- Soft assignments are produced by softmax without temperature calibration.
-- Reliability diagram has not been considered in the evaluation plan.
-- `f_uncertainty` selects points purely by entropy of the soft assignment vector.
-- No held-out pairwise validation set is maintained.
+K oscillating turn-to-turn in the AuditLog; BIC code executing after turn 0; number of clusters changing without a corresponding merge/split feedback delta.
 
-**Prevention:**
-- Apply temperature scaling post-hoc to soft assignments as a standard calibration step. This is low-effort and empirically effective.
-- Include a reliability diagram (or at minimum expected calibration error, ECE) as a reported metric.
-- `f_uncertainty` should combine calibrated entropy with the oracle's own stated uncertainty signals, not rely on raw model confidence alone.
-- Maintain a pairwise validation set: 50-100 point pairs where oracle has stated membership judgments. Track whether soft assignment ordering is consistent with oracle judgments.
-
-**Phase mapping:** Initial clustering implementation. Must be part of the first evaluation loop, not added later.
+**Phase to address:** Phase 9. Cross-check in Phase 10 (query filter must not silently emit "re-cluster fresh" that re-selects K).
 
 ---
 
-### Pitfall 4: State Management Complexity Kills Iteration Speed
+### Pitfall 4: Embedding dimension mismatch — 384 hardcoded everywhere collides with 1536 (OpenAI)
 
 **What goes wrong:**
-The system needs to maintain coherent state across turns: current clustering, oracle preference history, contradiction log, soft assignments, hierarchy, and the `f_next_best_step` decision context. As turns accumulate, the state object becomes large and tangled. Updating one part of the state (e.g., merging two clusters after oracle feedback) requires cascading updates across soft assignments, hierarchy, descriptions, and the uncertainty surface. Bugs are introduced. Sessions cannot be reproduced. Ablation experiments fail because state handling differs between conditions.
+`EMBEDDING_DIM = 384` is hardcoded in `embedding_store.py` and asserted in `EmbeddingStore.__init__` (`embeddings.shape[1] == EMBEDDING_DIM`). Swapping in OpenAI `text-embedding-3-small` (1536-dim) crashes that assert — which is correct fail-loud behavior — but the *real* danger is the silent path: loading a `.npy` produced by a different backend than the one configured, so K-means fits on 1536-dim vectors while the centroid-mapping generalization layer (`CentroidMappingStrategy`) re-embeds new items with the *local* MiniLM model (384-dim), producing a `(1536,) · (384,)` shape error or, worse, a quiet broadcast bug. Note `mapping.py` imports `EMBEDDING_MODEL` and re-encodes at inference time — that model MUST match whatever produced the stored vectors.
 
 **Why it happens:**
-Multi-turn LLM agents lose context progressively. Research shows a 39% average performance drop in multi-turn vs. single-turn settings, with accuracy falling to ~14% for GPT-4o in complex multi-turn scenarios. State stored only in the conversation context window will silently degrade after 20+ turns.
+"Dynamic dim" is implemented as "remove the assert" instead of "thread the actual dim through". The dim and the model name are two separate facts that must be stored *together with the artifact* and validated on load.
 
-**Consequences:**
-- Late turns produce inconsistent state (contradictory cluster descriptions, stale soft assignments).
-- Ablation experiments cannot be run reproducibly.
-- The human study cannot be debugged when participants encounter unexpected behavior.
-- The `latest intent wins` policy becomes untestable because the contradiction log is unreliable.
+**How to avoid:**
+Replace the module constant with **dim and model recorded in the embeddings artifact's sidecar metadata** (e.g. `embeddings.meta.json` carrying `{model, dim, normalized, lib_version, n_items}`). `EmbeddingStore.load()` reads dim from metadata and asserts `embeddings.shape[1] == meta.dim`. Store the embedding model identity in `ClusteringState`/session and assert the mapping layer re-embeds with the same model. Make `CentroidMappingStrategy` take the backend/model from session config, not the module-level `EMBEDDING_MODEL`.
 
 **Warning signs:**
-- State is passed as raw conversation history rather than a structured object.
-- No serialization / deserialization of session state.
-- Turn 15+ behavior has not been tested.
-- No session replay capability.
+`AssertionError: Expected embedding dim 384, got 1536`; cosine/dot-product shape mismatch in `CentroidMappingStrategy.assign`; generalization accuracy collapsing because new items are embedded in a different space than the corpus.
 
-**Prevention:**
-- Define a typed state schema from day one: `ClusteringState` containing current partition, soft assignments, hierarchy, oracle preference log, contradiction log, and turn history. This is a data structure, not a prompt.
-- The Clustering Agent reads from and writes to this state object explicitly at each turn. It does not reconstruct state from conversation history.
-- Serialize state to disk after each turn. This gives session replay, enables ablation reproducibility, and surfaces state bugs early.
-- Test state integrity at turn 20, 30, 50 with a synthetic oracle before any human study.
-- Keep the context window injection small: inject a structured state summary (under 500 tokens) rather than the full conversation history.
-
-**Phase mapping:** Core architecture. Must be established before implementing `f_next_best_step` or `f_next_state`.
+**Phase to address:** Phase 7 (this is the core of "pluggable backends + dynamic dim"). Must land before Phase 8 stores Colab-produced artifacts.
 
 ---
 
-### Pitfall 5: Contradiction / Preference-Drift Handling Is "Latest Wins" but Never Validated
+### Pitfall 5: Silent normalization mismatch between OpenAI and sentence-transformers under L2 KMeans
 
 **What goes wrong:**
-The project specifies "latest oracle intent wins on contradictions." This policy is reasonable but requires active tracking and validation to be meaningful. The common failure mode is: the system claims to implement this policy but the underlying state update propagates the latest constraint only partially — old soft assignments, old cluster descriptions, or old hierarchy nodes that conflict with the latest intent are not updated. The system appears to handle contradictions but silently accumulates stale state.
-
-A second failure mode: the system logs "preference drift" as a signal but never uses it. If the oracle's evolving preferences are only stored in a log but never influence `f_next_best_step` (e.g., to ask a clarifying question when drift is detected), then tracking drift adds complexity without benefit.
+OpenAI embeddings are returned as **unit-normalized** vectors (length 1). `all-MiniLM-L6-v2` *also* outputs L2-normalized vectors via its Normalize module — but only when encoded through the full SentenceTransformer pipeline; raw transformer output or other models (e.g. `all-mpnet`, which the stale docstrings still reference) are NOT necessarily unit length. The existing `KMeansBackend._compute_soft_probs` uses **raw L2 distance**, and `_select_k_via_bic` uses a Gaussian mixture — both are scale-sensitive. Mixing a normalized backend and an unnormalized one (or comparing runs across backends) makes distances, softmax temperatures, and BIC scores non-comparable, quietly skewing cluster shapes and soft-prob calibration without any crash.
 
 **Why it happens:**
-Preference drift is under-studied: "No IDM (Interactive Decision Making) technique has been explicitly designed to handle preference drift." The default implementation treats all oracle feedback as independent constraints, missing the sequential structure.
+Cosine-vs-L2 assumptions are invisible. Developers assume "embeddings are embeddings." OpenAI's API doesn't expose a `normalize` flag (always normalized); sentence-transformers' `encode()` does NOT normalize unless `normalize_embeddings=True` is passed OR the model has a Normalize layer — easy to get wrong when adding a new model.
 
-**Consequences:**
-- Contradiction handling claims cannot be verified.
-- The convergence story is false: the system may appear to converge while actually accumulating conflicting constraints.
-- The evaluation metric for "contradiction rate" becomes meaningless.
+**How to avoid:**
+**Normalize at the backend boundary, explicitly, for every backend.** Each embedding backend's contract must return unit-norm vectors (assert `np.allclose(norms, 1.0)` after encode). Record `normalized: true` in artifact metadata (Pitfall 4). Document that KMeans here is effectively spherical/cosine once inputs are unit-norm. Do NOT compare distances or BIC across runs with different normalization regimes.
 
 **Warning signs:**
-- Contradiction detection is a substring match on the preference log, not a semantic comparison.
-- When a contradiction is resolved, only the clustering state is updated, not soft assignments or descriptions.
-- Preference drift is logged but not read by any downstream function.
+Soft-probs nearly uniform or nearly one-hot after a backend swap (temperature now mis-scaled); BIC picking wildly different K for the "same" data across backends; cluster quality dropping only for one backend.
 
-**Prevention:**
-- After each state update, run a consistency check: verify that all currently active constraints are satisfiable with the current partition. If not, trigger the contradiction-resolution path explicitly.
-- Implement contradiction injection tests: manually force a session where the oracle says "put X in cluster A" and later "put X in cluster B." Verify that the final state, soft assignments, and descriptions all reflect the second instruction.
-- Make preference drift an active signal: if drift exceeds a threshold, `f_next_best_step` should ask a clarifying question ("Earlier you said X. Now you seem to prefer Y. Should I treat the earlier constraint as void?"). This also makes drift explicitly measurable.
-
-**Phase mapping:** `f_next_state` and contradiction-handling implementation phase.
+**Phase to address:** Phase 7 (define the normalize-at-boundary contract when introducing the backend Protocol).
 
 ---
 
-## Moderate Pitfalls
-
-Mistakes that reduce credibility or require significant rework without invalidating the entire project.
-
----
-
-### Pitfall 6: The Human Study Is Designed After the System Is Built (Validity Threat)
+### Pitfall 6: OpenAI embeddings cost / rate-limit / batch-limit footguns, and no cache → paying repeatedly
 
 **What goes wrong:**
-The system is built and LLM ablations run. Then, late, a 5-10 person human study is designed to "validate." At this point the study design is constrained by the system's current behavior rather than by methodological requirements. Key issues:
-- No within-subject comparison (each person only sees one condition, preventing comparison).
-- No counterbalancing of condition order.
-- No pre-study measurement of participants' prior familiarity with the dataset.
-- Consent forms drafted in a hurry, missing elements required for academic publication.
-- Session duration not piloted: participants quit before finishing.
-
-**Prevention:**
-- Write the human study protocol before implementing the full system. The protocol specifies: study design (within-subject recommended for N=5-10), conditions, counterbalancing, session duration limit (30-45 minutes max), consent procedures, and how data will be aggregated.
-- Include a 2-person pilot run during the alpha testing phase, not after.
-- Measure: time-to-complete, turns-to-satisfaction, self-reported cognitive load (NASA-TLX or simplified Likert), and pairwise agreement with LLM oracle on the same tasks.
-- Treat the human study as primary validation, not a checkbox.
-
-**Phase mapping:** Study protocol written in the evaluation design phase. Pilot run in alpha testing.
-
----
-
-### Pitfall 7: Cognitive Load Is Discovered at Study Time, Not Budgeted at Design Time
-
-**What goes wrong:**
-The system shows the oracle: current cluster descriptions (all K clusters), the point being discussed, its embedding neighbors, current soft assignment, and a proposed action. This is 4-6 distinct pieces of information per turn. Cognitive load research shows that working memory can hold ~4 chunks simultaneously. By turn 10, the oracle has accumulated partial memories of previous decisions that interfere with current decisions. Participants report confusion and fatigue. Measured turns-to-convergence is inflated because the oracle makes errors driven by overload.
+Naively embedding a 12K–15K corpus by looping one text per request: 12K HTTPS round-trips, easy to hit RPM/TPM rate limits (429s), and slow. Also: a single request array must be **≤ 2048 inputs** and each input **≤ 8192 tokens**; oversized batches 400-error. Most expensive failure: re-embedding the whole corpus on every session/experiment run because there's no cache — directly violating the core invariant ("embeddings computed once; never re-embed per turn") and burning real money on every ablation.
 
 **Why it happens:**
-Information display is designed to be informative ("show everything useful") rather than to minimize cognitive load. The research constraint ("budgeted from turn one") is stated but not operationalized into concrete per-turn display limits.
+The v1 path computed embeddings locally for free, so cost discipline was never needed. The OpenAI path makes re-embedding a billable event, and the existing `compute_and_save` guard (`assert not os.path.exists(embed_path)`) is the *only* thing preventing re-computation — fragile across machines/Colab.
 
-**Prevention:**
-- Define a maximum information budget per turn before any UI/prompt design: recommend no more than 3 information elements per turn (e.g., one cluster description + one point + one yes/no question).
-- Use progressive disclosure: offer summary first, details on request.
-- `f_output` must include a cognitive-load cost model. Each additional element shown has an estimated cost. The total per-turn cost has a hard cap.
-- Measure self-reported cognitive load (even a 1-item "how difficult was this turn?" slider) from the first human pilot.
+**How to avoid:**
+Batch encode (chunks of ≤ 2048, respect token budget), with retry-with-exponential-backoff ONLY at the API-call boundary (allowed per fail-loudly rule). **Content-hash cache**: key embeddings by `sha256(text + model_id)` so identical corpora never re-pay; persist the cache as the `.npy` + sidecar artifact and treat it as immutable. Make the OpenAI path go through the *same* compute-once-then-load pathway as local; never embed inside the turn loop. Log token counts and estimated cost.
 
-**Phase mapping:** `f_output` design, before any human-facing prompts are finalized.
+**Warning signs:**
+429 errors / `RateLimitError`; a session that's slow on *every* start (cache miss); OpenAI dashboard cost growing per experiment run; `BadRequestError` about array length > 2048 or token limit.
+
+**Phase to address:** Phase 7 (backend + cache contract); reinforced in Phase 8 (Colab is where bulk embedding should run, so the cache must be portable).
 
 ---
 
-### Pitfall 8: Generalization Is Deferred Until the End and Has No Evaluation Plan
+### Pitfall 7: Colab artifact version skew — vectors that look fine but are from a different model/library
 
 **What goes wrong:**
-The requirement to "codify oracle preferences into a function for new items" is listed but has no evaluation design. The frozen held-out subset exists, but there is no specification of what success looks like for new-item assignment. Common failure: the generalization function is tested on the held-out set but the oracle was implicitly consulted on some of those items during development. The held-out set is contaminated.
+Colab computes embeddings with one `sentence-transformers`/`transformers`/`torch` version; the local machine loads them and clusters/maps with another. Even the *same model name* can yield numerically different vectors across library versions or CPU-vs-GPU/float precision. The `.npy` loads cleanly (right shape, right dtype) so nothing crashes — but the local `CentroidMappingStrategy` re-embeds new items in a *slightly different* space, and reproducibility silently breaks. Also `.npy` dtype/shape mismatches: Colab may save float64 or a transposed array; the code assumes float32 `(N, dim)`.
 
-**Prevention:**
-- Lock the held-out subset before any development begins. Write its file path and hash to a file that is never modified.
-- Define the generalization metric before building the generalization function: "Given the oracle's preference function derived from the interaction session, what fraction of held-out items are assigned to the same cluster the oracle would choose on first presentation?"
-- The Oracle Agent must be forbidden from seeing held-out items during simulation runs. Enforce this programmatically.
+**Why it happens:**
+Colab pins nothing by default and upgrades packages frequently; "it ran in Colab" feels authoritative. Artifacts carry no provenance.
 
-**Phase mapping:** Dataset preparation (before coding). Evaluation planning (before interaction implementation).
+**How to avoid:**
+Ship a **provenance sidecar** with every artifact: `{model_id, lib_versions, device, dtype, dim, n_items, seed, sha256_of_input}`. On local load, assert dtype `float32`, shape `(N, dim)`, dim matches, and **model_id + major lib versions match the local mapping model**; crash loudly on mismatch (this is exactly the "fail loudly" philosophy). Pin versions in a `requirements-colab.txt` that mirrors local. Cast to float32 explicitly on save. Prefer producing the *initial clustering* in Colab too (the milestone allows this) so the local side only consumes, reducing cross-environment fit divergence.
+
+**Warning signs:**
+Generalization accuracy that differs between "Colab vectors" and "local vectors" runs; `np.load` returning float64; clustering that looks subtly different after regenerating embeddings; silent dtype upcasting slowing KMeans.
+
+**Phase to address:** Phase 8 (Colab pipeline) — but the metadata schema is shared with Phase 7's artifact format.
 
 ---
 
-### Pitfall 9: Stopping Signal Is Implicit or Circular
+### Pitfall 8: Colab session timeout / GPU variance corrupts or half-writes the artifact
 
 **What goes wrong:**
-The stopping signal is described as "oracle satisfaction, diminishing returns, or turn budget." Without an explicit operationalization, the system either:
-- Never stops (runs until the oracle stops responding).
-- Stops when the oracle explicitly says "I'm done," which is a self-report with high variance between personas.
-- Uses diminishing returns on clustering quality, which is the non-interactive metric from Pitfall 1.
+Colab disconnects (idle/max-runtime/GPU eviction) mid-embedding, leaving a truncated `.npy` or a partial upload to Drive/storage. Loading it later: either a shape that's `(K, dim)` with `K < N` (caught by the `len(records) == len(embeddings)` assert — good) or, if rows-per-text mapping drifts, vectors silently misaligned to the wrong texts (NOT caught — catastrophic). GPU availability varies (sometimes no GPU, sometimes T4 vs A100), changing throughput and occasionally numeric output.
 
-A circular stopping signal: the system stops when the Judge Agent's `f_eval` score exceeds a threshold, but `f_eval` uses oracle satisfaction as input, so the oracle is being asked to both produce feedback and determine when to stop producing feedback.
+**Why it happens:**
+Long single-shot encode jobs on free Colab; no checkpointing; saving directly to the final path instead of write-temp-then-rename.
 
-**Prevention:**
-- Operationalize the three stopping criteria independently and test each:
-  - Turn budget: hard cap (e.g., 20 turns). Always active.
-  - Diminishing returns: defined as "fewer than X points changed cluster assignment in the last N turns" — purely based on state change, not oracle evaluation.
-  - Oracle satisfaction signal: a structured end-turn response the oracle is prompted to produce ("DONE" vs "CONTINUE") at each turn, not inferred from natural language.
-- The Judge Agent should not query the oracle to decide whether to stop. It reads the state change signal and the turn count.
+**How to avoid:**
+Write artifacts atomically: encode to a temp file, `fsync`, then rename to final path only on success. Save `n_items` in metadata and assert `len == n_items` on load (extends the existing record-count assert to cross-environment). Checkpoint long encodes in chunks so a disconnect resumes rather than restarts. Keep embedding *order* identical to input order and store the `sha256_of_input` so misalignment is detectable. Don't depend on a specific GPU; pin seed and accept that GPU is a throughput convenience, not a correctness dependency.
 
-**Phase mapping:** `f_next_best_step` and Judge Agent implementation.
+**Warning signs:**
+`len(records) != len(embeddings)` assert firing after a Colab run; a `.npy` smaller than expected; Drive showing an in-progress/partial file; embeddings that cluster "wrong" because rows are off-by-some.
+
+**Phase to address:** Phase 8.
 
 ---
 
-## Minor Pitfalls
-
-Mistakes that reduce polish or efficiency but are recoverable.
-
----
-
-### Pitfall 10: Ablation Conditions Are Not Fully Crossed
+### Pitfall 9: Oracle-initiated flow with an empty/degenerate first query — "cluster on what?" before any clustering exists
 
 **What goes wrong:**
-Three to five interaction strategies are ablated, but conditions share oracle instances. If oracle persona A is used with strategy 1 and oracle persona B with strategy 2, any difference in outcome is confounded with oracle persona.
+The new flow is: dataset intro → oracle's first query → first clustering. If the oracle's first query is empty, vague ("just cluster it"), or contradictory, there's no prior state to fall back on (unlike v1, which always started from a default clustering). Naive handling either crashes on `state=None` in code paths that assume a `ClusteringState` exists (e.g. the query filter expects clusters to reference), or fabricates a degenerate K=1/K=N clustering. The mapping/feedback layers assume `len(state.clusters) > 0` (asserts in `mapping.py`).
 
-**Prevention:**
-Run each interaction strategy with each oracle persona configuration. Minimum: 3 strategies × 3 oracle personas × 3 dataset seeds = 27 runs. This is feasible with LLM oracles. Report results as strategy × persona interaction, not strategy main effect alone.
+**Why it happens:**
+Inverting the loop (oracle-first instead of system-first) removes the guaranteed turn-0 state that every downstream component implicitly relied on.
 
-**Phase mapping:** Ablation experiment design.
+**How to avoid:**
+Define an explicit **bootstrap contract**: the first oracle query is interpreted by the query filter into an initial clustering *instruction*, and only then is the first KMeans fit run (with BIC K-selection allowed exactly here — see Pitfall 3). If the first query is empty/degenerate, fall back to a documented default ("cluster by overall topic") rather than crashing or producing K=1 — and surface that to the oracle. Keep the "always a complete assignment" invariant: once the first fit runs, `f_output` returns full state. Add an assert that no feedback/filter code runs before the first clustering exists.
+
+**Warning signs:**
+`NoneType has no attribute clusters`; K=1 or K=N initial clustering; query filter invoked with no clusters to reference; oracle's first message producing an empty cluster set.
+
+**Phase to address:** Phase 10 (oracle-initiated flow + query filter are co-designed).
 
 ---
 
-### Pitfall 11: Cluster Descriptions Are Generated Once and Become Stale
+### Pitfall 10: Query filter over-filters, dropping oracle intent — or re-introduces contradictions the feedback layer already guards
 
 **What goes wrong:**
-Initial cluster descriptions are generated before the oracle has seen the data. As oracle feedback reshapes the clusters, descriptions are not updated. The oracle is then shown descriptions that no longer match the cluster contents. This increases cognitive load and introduces confusion about whether the cluster description or the cluster membership takes precedence.
+The query filter translates NL oracle queries into "simple, contradiction-free clusterer instructions." Two failure modes: (a) **over-filtering** — it strips nuance and the oracle's actual intent is lost ("group by sentiment AND topic" → "group by topic"), so the system optimizes the wrong objective and the oracle gets frustrated; (b) **re-introducing contradictions** — it emits instructions that conflict with the existing "latest intent wins on contradictions" layer, producing double-handling or oscillation. The existing `feedback.py` already has type-priority ordering (global→split→merge→move→instructional, D-07) and a contradiction policy; a second filter that *also* resolves contradictions creates two competing arbiters.
 
-**Prevention:**
-Cluster descriptions are outputs of `f_output` and must be regenerated (or at minimum flagged for review) after any state change that affects cluster membership. This is a state dependency that must be explicit in the state schema.
+**Why it happens:**
+The filter is built as a standalone LLM prompt without a defined contract about *what it is allowed to drop* and *who owns contradiction resolution*. "Make it simple" is interpreted as "make it lossy."
 
-**Phase mapping:** `f_output` and `f_next_state` implementation.
+**How to avoid:**
+Define the filter's job narrowly: **normalize/translate, do not arbitrate.** Contradiction resolution stays in the existing feedback layer (single owner — respects single-source-of-truth). The filter should preserve all distinct intents as separate `FeedbackDelta` objects rather than collapsing them. Log the original query alongside the filtered output in the AuditLog so over-filtering is auditable/measurable. Add a regression test: known multi-intent queries must yield multiple deltas, not one. Treat "latest intent wins" as the *only* contradiction rule.
+
+**Warning signs:**
+Oracle repeatedly restating the same intent (signal it was dropped); two layers both rewriting/reordering feedback; oscillating clusterings turn-to-turn; AuditLog showing filtered instruction much shorter/simpler than the query in ways that lose constraints.
+
+**Phase to address:** Phase 10.
 
 ---
 
-### Pitfall 12: Confidence Intervals Are Added Post-Hoc
+### Pitfall 11: Stale UMAP geometry shown after re-clustering — recolor-vs-refit confusion
 
 **What goes wrong:**
-Claims are made first; confidence intervals are added to satisfy the project requirement ("at least one defensible quantified claim with confidence intervals"). This produces narrow intervals on selected metrics and wide intervals on the primary metric — the opposite of what a legitimate claim requires.
+The decision is "cache 2D coords, **recolor** on cluster change, don't **refit** the projection." Done wrong, the system either (a) re-runs UMAP on every cluster change — slow, and worse, the layout *moves* so the oracle thinks the data changed when only labels did (and UMAP is itself nondeterministic without a fixed seed, compounding Pitfall 2's reproducibility issue); or (b) caches coords but recolors using *churned* cluster IDs (Pitfall 1), so colors are wrong even though positions are right; or (c) shows positions from the *original* embedding space while clusters now reflect a re-fit, so the geometry and the coloring disagree and points appear mis-colored relative to their neighbors.
 
-**Prevention:**
-Decide the primary quantified claim before running experiments: e.g., "systems with `f_next_best_step` reach oracle satisfaction in fewer turns than random-action baseline (95% CI)." Run enough simulation trials to produce a meaningful CI. Bootstrap resampling across oracle seeds is appropriate for LLM oracle runs.
+**Why it happens:**
+UMAP is expensive, so caching is obviously right — but the relationship "coords are a fixed function of the (immutable) embeddings; colors are a function of the (changing) assignments" isn't made explicit. Re-fit changes colors, not positions — but only if cluster IDs are stable.
 
-**Phase mapping:** Evaluation design, before any experiment runs.
+**How to avoid:**
+Compute UMAP **once** from the immutable embeddings (with a fixed `random_state`) at artifact-build time (ideally in Colab alongside embeddings — milestone-aligned), store coords in the artifact. On every turn, only re-map `assignment[item] → color`; never recompute coords. This **hard-depends on Pitfall 1's ID-stability layer** — recolor is only meaningful if IDs are aligned across re-fits. Document the invariant: "positions = f(embeddings) fixed; colors = f(assignments) per turn." Since embeddings are read-only and never re-embedded, coords are legitimately permanent.
 
----
+**Warning signs:**
+Points visibly relocating after a re-cluster; oracle confusion ("why did everything move?"); colors not matching spatial clusters; UMAP recompute appearing in turn-loop timing logs.
 
-## Phase-Specific Warnings
-
-| Phase Topic | Likely Pitfall | Mitigation |
-|-------------|---------------|------------|
-| Evaluation design | Pitfall 1: no baseline condition | Define no-dialogue and random-interaction baselines first |
-| Oracle Agent design | Pitfall 2: over-consistent oracle | Add explicit noise/drift/sycophancy-resistance parameters from the start |
-| Initial clustering | Pitfall 3: uncalibrated soft assignments | Apply temperature scaling; add reliability diagram to eval suite |
-| State schema design | Pitfall 4: state management collapse | Define typed `ClusteringState` object; serialize after every turn |
-| Contradiction handling | Pitfall 5: partial state updates | Write contradiction injection tests; active drift detection |
-| Human study protocol | Pitfall 6: late study design | Write protocol before building system; pilot with 2 people in alpha |
-| Per-turn display design | Pitfall 7: cognitive overload | Hard cap on information elements per turn; measure NASA-TLX from day 1 |
-| Dataset preparation | Pitfall 8: held-out set contamination | Lock and hash held-out split before any code is written |
-| Stopping criteria | Pitfall 9: circular/implicit stopping | Three operationalized stopping criteria, each independently testable |
-| Ablation experiment | Pitfall 10: confounded conditions | Cross oracle personas × interaction strategies |
-| Cluster description updates | Pitfall 11: stale descriptions | Track description freshness in state; auto-flag on cluster update |
-| Quantitative claims | Pitfall 12: post-hoc CI | Specify primary claim and required sample size before running experiments |
+**Phase to address:** Phase 11 (depends on Phase 9 ID-stability and Phase 8 artifact coords).
 
 ---
 
-## What Previous Interactive Clustering Papers Got Wrong
+### Pitfall 12: Coordination agent — state-merge conflicts and partial failures across N sessions break single-source-of-truth
 
-Based on the scoping review (Springer, 2020, 50 primary studies) and the comprehensive ACM review (2020, 105 papers):
+**What goes wrong:**
+The coordination agent decomposes complex operations into pairwise sub-operations across N clusterer sessions. Risks: (a) **two sessions mutate overlapping cluster state** and a naive merge double-applies or loses a feedback delta; (b) **partial failure** — 3 of 5 sub-sessions succeed, 2 crash (correct, fail-loudly!), leaving a half-merged global state with no clear rollback, violating "f_output always returns a complete, consistent assignment"; (c) **single-source-of-truth violation** — each session keeps its own `ClusteringState` and there's no defined authoritative merged state; the AuditLog (replay source of truth) can't represent N concurrent writers cleanly. With ASGI/asyncio (no eventlet/gevent), CPU-bound fits already run in `threading.Thread` and emit cross to the loop via `run_coroutine_threadsafe` — N sessions multiply the thread-to-loop coordination surface.
 
-**The three most consistent gaps documented in the literature:**
-1. **Evaluation of expert supervision** — most papers do not evaluate whether and how human feedback actually improved outcomes versus a non-interactive baseline.
-2. **Evaluation of expert effort** — turns, time, cognitive load, and decision complexity are almost never measured. "The algorithm converges" is reported without measuring what it cost the human.
-3. **Meaningfully involving human experts** — most studies use synthetic feedback, small-scale user studies with non-expert participants, or skip human validation entirely. Oracle behavior is modeled as noise-free constraints, not realistic human preferences.
+**Why it happens:**
+Parallelism is added for scale without first defining the merge semantics and the authoritative state owner. "Pairwise sub-operations" implies a reduce step that's easy to get non-associative or non-idempotent.
 
-**What this means for this project:**
-All three gaps are explicitly identified in the PROJECT.md requirements and constraints. The risk is not that the project misses them in its stated goals — it is that implementation pressure leads to deferring their measurement to "evaluation," at which point the system design no longer supports them. The prevention strategy is to make all three gaps first-class engineering requirements, not research questions to be answered later.
+**How to avoid:**
+Defer to last (already decided — good). Define **one authoritative merged `ClusteringState`** and make sub-sessions produce *proposals* that the coordinator applies sequentially through the existing single-writer feedback pipeline (idempotent, ordered, latest-intent-wins). Make sub-operations idempotent and replayable. On partial failure, **fail loudly and abort the whole coordinated op** (don't commit a partial merge); the last good `ClusteringState` in the AuditLog is the recovery point. Keep emits crossing threads via `run_coroutine_threadsafe`; do NOT reach for eventlet/gevent to "simplify concurrency" — they corrupt numpy/sklearn/UMAP. Serialize the merged state to the single AuditLog only after a full successful reduce.
+
+**Warning signs:**
+Cluster item counts not summing correctly after a merge; a feedback delta applied twice; partial state committed after a sub-session crash; any import of eventlet/gevent; race conditions in the socket emits under N sessions.
+
+**Phase to address:** Phase 12 (last, by design).
 
 ---
+
+## Technical Debt Patterns
+
+| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
+|----------|-------------------|----------------|-----------------|
+| Keep `EMBEDDING_DIM = 384` constant, just relax the assert for OpenAI | Fast backend swap | Dim/model facts drift apart; mapping layer re-embeds in wrong space (Pitfall 4) | Never — thread dim through the artifact metadata in Phase 7 |
+| Re-fit KMeans without an ID-alignment step | Ships per-query re-fit quickly | Merge/split history and UMAP recolor silently break (Pitfalls 1, 11) | Never — alignment is the point of Phase 9 |
+| Embed via OpenAI inside the turn loop / per session start | No cache plumbing | Re-pays per run, violates compute-once invariant, hits rate limits (Pitfall 6) | Never — always compute-once + content-hash cache |
+| Save Colab `.npy` with no provenance sidecar | One less file | Silent version/space skew, undetectable misalignment (Pitfalls 7, 8) | Never for shared artifacts; tolerable only for throwaway local experiments |
+| Recompute UMAP per turn for "freshness" | No caching code | Layout jitters, nondeterministic, slow, confuses oracle (Pitfall 11) | Never — coords are f(immutable embeddings), compute once |
+| Let the query filter resolve contradictions too | One LLM call does everything | Two contradiction arbiters; oscillation; lost intent (Pitfall 10) | Never — filter normalizes, feedback layer arbitrates |
+| Commit partial coordinated merge on sub-session failure | "Some progress" | Inconsistent global state, broken replay (Pitfall 12) | Never — abort whole op, fail loudly |
+
+## Integration Gotchas
+
+| Integration | Common Mistake | Correct Approach |
+|-------------|----------------|------------------|
+| OpenAI embeddings API | One request per text; ignoring 2048-input / 8192-token limits; no backoff | Batch ≤ 2048 inputs respecting token budget; retry-with-backoff at the API boundary only; content-hash cache |
+| OpenAI vs sentence-transformers vectors | Assuming both are unit-norm and L2-comparable | Normalize at backend boundary, assert unit norm, record `normalized` in metadata; never compare distances/BIC across normalization regimes |
+| Colab → local artifact handoff | Trusting a clean `.npy` load as correctness | Provenance sidecar (model, lib versions, dtype, dim, n_items, input hash); assert all on load; atomic temp-then-rename writes |
+| sklearn KMeans across environments | Relying on default `n_init`/`random_state` | Pin `random_state` and explicit `n_init`; pin sklearn version Colab==local; determinism test |
+| python-socketio under N sessions | Reaching for eventlet/gevent for concurrency | Keep asyncio + `threading.Thread` + `run_coroutine_threadsafe`; never monkey-patch (corrupts numpy/sklearn/UMAP) |
+
+## Performance Traps
+
+| Trap | Symptoms | Prevention | When It Breaks |
+|------|----------|------------|----------------|
+| Per-query KMeans re-fit on full corpus | Each oracle turn takes seconds–minutes | Re-fit is acceptable per the milestone (embeddings fixed); pin K, warm-start centroids from prev fit where valid; profile | Noticeable at ~10K+ items per turn |
+| UMAP recomputed per turn | Multi-second stalls every cluster change | Compute coords once from immutable embeddings, recolor only | Any corpus where UMAP > ~1s |
+| OpenAI re-embedding per run | Slow session start every time + cost | Content-hash cache, compute-once | Every experiment run / ablation sweep |
+| N coordinated sessions each holding full embeddings in RAM | Memory blow-up | Share one read-only `EmbeddingStore`; sessions hold only state/assignments | At large N × large corpus |
+
+## Security / Integrity Mistakes
+
+| Mistake | Risk | Prevention |
+|---------|------|------------|
+| OpenAI API key in code or committed artifacts/notebooks | Leaked key, billing abuse | Keys in `.env` only (existing pattern); never in Colab notebook cells or sidecar metadata |
+| Treating Colab artifacts as trusted without verification | Wrong-space vectors silently used in headline experiments → invalid CIs | Verify provenance + input hash before any experiment; held-out split stays locked |
+| Mutating embeddings artifact in place | Breaks read-only invariant and reproducibility | Artifacts immutable; new model = new artifact + new hash |
+
+## UX Pitfalls (oracle-facing)
+
+| Pitfall | Oracle Impact | Better Approach |
+|---------|---------------|-----------------|
+| Cluster colors/IDs reshuffling after a query | Oracle thinks system "redid everything"; cognitive-load spike | ID-stability alignment + recolor-only UMAP (Pitfalls 1, 11) |
+| Over-filtered first query producing a degenerate clustering | Oracle starts from nonsense, loses trust | Bootstrap contract + documented default + surface the interpretation (Pitfall 9) |
+| Silent dropping of multi-intent queries | Oracle repeats themselves, frustration | Filter preserves distinct intents as separate deltas; log original query (Pitfall 10) |
+| UMAP points moving between turns | "Why did the map change?" — misreads label change as data change | Fixed coords; positions never move (Pitfall 11) |
+
+## "Looks Done But Isn't" Checklist
+
+- [ ] **Pluggable backends:** Often missing the *metadata sidecar* — verify dim AND model AND normalized flag travel with the `.npy` and are asserted on load.
+- [ ] **Per-query re-fit:** Often missing the *ID-alignment step* — verify cluster IDs/names survive a re-fit when the oracle didn't change K (run a no-op query, assert IDs unchanged).
+- [ ] **Re-fit:** Often missing *K pinning* — verify BIC runs only at turn 0; assert K unchanged on subsequent re-fits unless split/merge feedback present.
+- [ ] **OpenAI embeddings:** Often missing the *cache* — verify second session start is instant (cache hit) and no API call fires.
+- [ ] **Colab artifacts:** Often missing *atomic writes + n_items assert* — verify a truncated artifact is rejected loudly, not loaded misaligned.
+- [ ] **UMAP:** Often missing the *recolor-not-refit* guarantee — verify coords are byte-identical across turns; only colors change.
+- [ ] **Query filter:** Often missing *contradiction-ownership separation* — verify the filter doesn't re-order/resolve; the feedback layer remains the only arbiter.
+- [ ] **Oracle-initiated flow:** Often missing the *empty-first-query* path — verify a blank/vague first query yields a documented default, not a crash or K=1.
+- [ ] **Coordination agent:** Often missing *partial-failure rollback* — verify a sub-session crash aborts the whole op and leaves the last good state intact.
+- [ ] **All concurrency:** Verify zero imports of eventlet/gevent across new code.
+
+## Recovery Strategies
+
+| Pitfall | Recovery Cost | Recovery Steps |
+|---------|---------------|----------------|
+| Cluster-ID churn (1) | MEDIUM | Replay AuditLog with the alignment layer inserted; re-derive stable IDs from item-set overlap across the recorded sequence |
+| KMeans nondeterminism (2) | LOW | Pin seed + sklearn version, add determinism test, re-run affected experiments |
+| Unintentional K drift (3) | LOW | Persist K in session, gate BIC to turn 0, re-run |
+| Dim mismatch (4) | LOW (fails loudly) | Add metadata sidecar; regenerate artifact with correct backend |
+| Normalization mismatch (5) | MEDIUM | Re-normalize at boundary; re-fit; discard cross-regime comparisons |
+| OpenAI cost/limits (6) | LOW | Add batching + backoff + content-hash cache; bulk-embed in Colab |
+| Colab version skew (7) | MEDIUM | Pin `requirements-colab.txt`; regenerate artifacts; verify input hash |
+| Colab truncation (8) | LOW (assert catches len) | Atomic writes + checkpointed encode; regenerate |
+| Empty first query (9) | LOW | Add bootstrap default + assert-before-first-clustering |
+| Over-filtering (10) | MEDIUM | Re-scope filter to normalize-only; add multi-intent regression test |
+| Stale UMAP (11) | LOW | Compute coords once from embeddings; recolor only |
+| Coordination merge (12) | HIGH | Abort to last good state in AuditLog; redesign merge as ordered single-writer reduce |
+
+## Pitfall-to-Phase Mapping
+
+| Pitfall | Prevention Phase | Verification |
+|---------|------------------|--------------|
+| 1 — Cluster-ID churn | 9 | No-op query leaves IDs/names unchanged; merge/split still resolve |
+| 2 — KMeans nondeterminism | 9 (+8 versions) | Determinism test: two fits → identical labels |
+| 3 — K drift | 9 (+10 filter check) | BIC executes only turn 0; K unchanged assert holds |
+| 4 — Dim mismatch | 7 | Load asserts dim==meta.dim; mapping re-embeds in same space |
+| 5 — Normalization mismatch | 7 | Post-encode unit-norm assert per backend |
+| 6 — OpenAI cost/limits/cache | 7 (+8 bulk) | Second session start = cache hit, no API call |
+| 7 — Colab version skew | 8 (schema w/ 7) | Provenance asserts; input-hash match |
+| 8 — Colab truncation/GPU | 8 | Truncated artifact rejected; n_items assert |
+| 9 — Empty first query | 10 | Blank first query → documented default, no crash |
+| 10 — Query filter | 10 | Multi-intent query → multiple deltas; filter doesn't arbitrate |
+| 11 — Stale UMAP | 11 (needs 9, 8) | Coords byte-identical across turns; colors change only |
+| 12 — Coordination merge | 12 | Partial failure aborts whole op; single authoritative state; no eventlet/gevent |
 
 ## Sources
 
-- Interactive Clustering scoping review (Springer, 2020): https://link.springer.com/article/10.1007/s10462-020-09913-7
-- Interactive Clustering comprehensive review (ACM, 2020, 105 papers): https://dl.acm.org/doi/fullHtml/10.1145/3340960
-- SycEval: LLM Sycophancy Evaluation (2025): https://arxiv.org/html/2502.08177v2
-- The Challenge of Using LLMs to Simulate Human Behavior (causal inference): https://arxiv.org/html/2312.15524v1
-- Are LLM Agents Behaviorally Coherent? Latent Profiles for Social Simulation: https://arxiv.org/html/2509.03736v1
-- Towards Calibrated Deep Clustering Network: https://arxiv.org/html/2403.02998v2
-- Limitations of Current Evaluation Practices for Conversational Recommender Systems: https://arxiv.org/html/2510.05624
-- Reward Hacking in RLHF (Lilian Weng): https://lilianweng.github.io/posts/2024-11-28-reward-hacking/
-- LLMs Get Lost In Multi-Turn Conversation: https://arxiv.org/html/2505.06120v1
-- Why Do Multi-Agent LLM Systems Fail?: https://arxiv.org/html/2503.13657v3
-- Handling concept drift in preference learning for interactive systems: https://www.researchgate.net/publication/228967853_Handling_concept_drift_in_preference_learning_for_interactive
-- HITL Machine Learning state of the art (Springer, 2022): https://link.springer.com/article/10.1007/s10462-022-10246-w
-- Stable reliability diagrams for probabilistic classifiers (PNAS): https://www.pnas.org/doi/10.1073/pnas.2016191118
-- Dial-In LLM: Human-Aligned Dialogue Intent Clustering with LLM-in-the-loop: https://arxiv.org/html/2412.09049v1
+- Existing code (HIGH): `src/embedding_store.py` (hardcoded `EMBEDDING_DIM=384`, read-only store, compute-once guard), `src/clustering.py` (`KMeansBackend`, `random_state=0/n_init=10`, `_select_k_via_bic`, raw-L2 soft probs, positional ID remap), `src/state.py` (`Cluster.id` "never reused" invariant), `src/mapping.py` (`CentroidMappingStrategy` re-embeds with module-level `EMBEDDING_MODEL`), `src/feedback.py` (type-priority D-07, latest-intent-wins).
+- `.planning/PROJECT.md` and `CLAUDE.md` (HIGH): locked decisions (re-cluster not re-embed; Colab compute-only; YAML prompts; coordination last), K-only-via-oracle anti-feature rule, no-eventlet/gevent rule, AuditLog as replay source of truth, fail-loudly philosophy.
+- [Vector embeddings | OpenAI API](https://developers.openai.com/api/docs/guides/embeddings) (MEDIUM): embeddings returned unit-normalized; ≤2048 inputs/array; 8192 max input tokens.
+- [text-embedding-3-small Model | OpenAI API](https://platform.openai.com/docs/models/text-embedding-3-small) (MEDIUM): 1536 dimensions.
+- [sentence-transformers/all-MiniLM-L6-v2 · Hugging Face](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (MEDIUM): 384-dim, L2-normalized output via Normalize module; `normalize_embeddings` controls explicit normalization.
+- scikit-learn KMeans `n_init="auto"` default change (≥1.4) (MEDIUM, training-data + changelog knowledge): motivates version pinning Colab==local.
+
+---
+*Pitfalls research for: adding compute-offload + pluggable backends + per-query re-fit + oracle-initiated flow + query filter + coordination agent to a conversational-clustering research system*
+*Researched: 2026-05-21*

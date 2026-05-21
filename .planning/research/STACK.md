@@ -1,277 +1,148 @@
-# Technology Stack
+# Stack Research — v2.0 "Experimentation Flexibility & Scale"
 
-**Project:** Conversational Clustering — Multi-Agent Human-in-the-Loop System
-**Researched:** 2026-04-29
-**Overall confidence:** HIGH (core stack), MEDIUM (tooling periphery)
+**Domain:** Python conversational-clustering research system — v2.0 milestone additions (Colab compute offload, pluggable embedding backends, versioned YAML configs)
+**Researched:** 2026-05-21
+**Confidence:** HIGH (all key versions verified against the live local environment + current PyPI/official docs)
 
----
+> **Supersession note:** This file previously held the v1 (milestone-1) stack research, which described an *aspirational* stack (LangGraph, MLflow, Typer/Rich, sklearn-native HDBSCAN) that does **not** match what was actually built. The shipped v1 system uses a plain `ClusteringBackend` `typing.Protocol`, `src/llm_call.py`/`src/llm_key.py` for LLM access, FastAPI + uvicorn + python-socketio for the UI, and standalone `hdbscan` + sklearn KMeans. The prior content remains in git history. This document is scoped to **only the NEW v2.0 capabilities**; the validated v1 web/DB/clustering/LLM plumbing is not re-researched.
+
+## Environment baseline (verified on this machine, 2026-05-21)
+
+Probed the live interpreter — these are the versions actually installed, so recommendations are pinned to what is known-good here:
+
+| Package | Installed | Relevance |
+|---------|-----------|-----------|
+| `sentence-transformers` | **5.4.1** | local embedding backend |
+| `huggingface_hub` | **1.7.1** | already present (transitive via sentence-transformers); reuse for artifact handoff |
+| `openai` | **2.26.0** | OpenAI embedding backend client (same SDK as `llm_call.py`) |
+| `pydantic` | **2.12.5** | config schema validation (already a dep) |
+| `pyyaml` | **6.0.3** | already a dep |
+| `numpy` | **2.4.3** | `.npy` artifact I/O |
+| `scikit-learn` | **1.8.0** | KMeans backend |
+| `torch` | **2.11.0+cpu** | **CPU-only locally** — this is the concrete motivation for Colab GPU offload |
+| `ruamel.yaml` | not installed | candidate for round-trip YAML (see decision below) |
+
+**Critical compatibility finding (resolved):** `huggingface_hub` 1.0 removed `cached_download`, which breaks *old* `sentence-transformers` (<3.x). The local env already runs the modern pairing `huggingface_hub 1.7.1` + `sentence-transformers 5.4.1`, which work together cleanly. So **no down-pinning is required** — but the stale `sentence-transformers>=2.7` line in `requirements.txt` is misleading and must be bumped to reflect reality (see Version Compatibility).
 
 ## Recommended Stack
 
-### LLM Orchestration Framework
+### Core Technologies (new for v2.0)
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| LangGraph | 1.1.x (latest: 1.1.10) | Agent graph execution, state machine, human-in-the-loop interrupt | Only framework where stateful graph + HITL interrupts + durable execution are first-class citizens, not bolted on. Reached 1.0 stability in late 2025. |
-| LangChain Core | 0.3.x | Message types, prompt templates, LLM abstraction | Underlies LangGraph; provides model-agnostic LLM calls without framework lock-in |
-
-**Why LangGraph over alternatives:**
-
-- **vs AutoGen 0.4**: AutoGen's AgentChat is conversational-first and good for free-form dialogue, but state persistence and explicit graph control are harder to achieve. The Clustering Agent's `f_next_best_step` decision logic needs deterministic branching — a graph node, not a chat turn.
-- **vs CrewAI**: Role-based YAML-driven setup is optimized for pipelines with static roles and sequential execution. The oracle feedback loop is inherently cyclical and stateful; CrewAI requires workarounds for that.
-- **vs Raw OpenAI API**: Raw API gives full transparency but forces manual implementation of state, checkpointing, conversation history management, and HITL pause/resume. LangGraph provides all of these; the cost is ~200 lines of boilerplate saved per agent.
-- **vs PydanticAI**: Good for type-safe single-agent pipelines. Multi-agent orchestration and graph-level state machines are not its primary target.
-
-**Confidence:** HIGH — LangGraph 1.1.x is the ecosystem default for stateful multi-agent Python systems as of 2026.
-
----
-
-### LLM Provider
-
-| Technology | Version/Model | Purpose | Why |
-|------------|--------------|---------|-----|
-| OpenAI API | gpt-4o-mini (oracle simulation, judge), gpt-4o (clustering agent when needed) | LLM backbone for all three agents | Best cost/capability ratio for high-volume oracle simulations; gpt-4o-mini at $0.15/M input tokens enables hundreds of ablation runs without budget pressure |
-| openai (Python SDK) | 1.x | API client | Official, maintained, async-capable |
-
-**Model assignment rationale:**
-- **Clustering Agent**: gpt-4o (or gpt-4.1 if available). Proposal quality matters; pay for reasoning.
-- **Oracle Agent**: gpt-4o-mini. Runs in a tight loop; cost matters more than ceiling capability. Persona + preference spec constrains output space.
-- **Judge Agent**: gpt-4o-mini. Convergence detection is a structured classification task, not a reasoning task.
-
-**Model-agnostic note:** Use LangGraph's LangChain model abstraction (`ChatOpenAI`, `ChatAnthropic`) so models can be swapped without changing agent logic. This is important for ablation experiments.
-
-**Confidence:** HIGH for OpenAI; MEDIUM for specific model assignments (adjust after first cost profiling run).
-
----
-
-### Embedding Library
-
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| sentence-transformers | 5.x (latest: 5.3.0) | Sentence embeddings for text clustering | Local inference, no API cost, reproducible, well-benchmarked on clustering tasks. Project constraint says one embedding representation — this is the standard choice. |
-
-**Recommended model:** `all-mpnet-base-v2`
-
-- Produces 768-dimensional vectors, 12 transformer layers, ~110M parameters
-- Consistently ranks higher than `all-MiniLM-L6-v2` on MTEB clustering benchmarks (~87-88% STS-B vs ~84-85%)
-- Speed is not the bottleneck here: embeddings are computed once at dataset load, not per conversation turn
-- For datasets of 500-5000 texts (support tickets, reviews), inference takes seconds on CPU
-
-**Why not OpenAI `text-embedding-3-small`:**
-- $0.02/M tokens — negligible for one-time embedding, but adds an external API dependency
-- Embeddings are not reproducible across API versions (model updates change vectors silently)
-- Local `sentence-transformers` eliminates the API round-trip and is fully deterministic for research reproducibility
-
-**Confidence:** HIGH — sentence-transformers is the ecosystem default for local text embedding; model choice is MEDIUM (could switch to `all-MiniLM-L6-v2` if CPU is severely constrained).
-
----
-
-### Clustering Algorithm
-
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| scikit-learn (HDBSCAN) | 1.6+ (stable 1.8.0) | Initial clustering, soft assignment probabilities | HDBSCAN is now native in scikit-learn since 1.3; provides `probabilities_` attribute for soft assignments (required by PROJECT.md); automatically determines cluster count; handles variable-density clusters in embedding space |
-
-**Why HDBSCAN over k-means:**
-- k-means requires specifying K upfront and produces hard assignments. The project explicitly requires soft assignments and a navigable hierarchy, which HDBSCAN natively provides.
-- HDBSCAN's dendrogram output enables hierarchical exploration (3-10 top-level clusters with sub-clusters).
-- `probabilities_` per point directly feeds soft-assignment calibration metrics.
-
-**Why scikit-learn's HDBSCAN over `hdbscan` package:**
-- `sklearn.cluster.HDBSCAN` (added 1.3, stable in 1.6+) avoids an extra dependency.
-- The standalone `hdbscan` package (`scikit-learn-contrib/hdbscan`) offers `all_points_membership_vectors()` for full probability distributions over all clusters. **Use the standalone package if full per-point multinomial soft assignments are needed** (not just membership strength scalar). Evaluate this at implementation time.
-
-**Soft assignment implementation note:**
-```python
-from sklearn.cluster import HDBSCAN
-
-clusterer = HDBSCAN(
-    min_cluster_size=5,
-    cluster_selection_method="eom",  # Excess-of-Mass: better for variable density
-    metric="euclidean",              # Use after L2-normalizing embeddings
-    store_centers="centroid",        # Required for f_output (show cluster center)
-    prediction_data=True,            # Required for membership vectors
-)
-clusterer.fit(embeddings)
-labels = clusterer.labels_          # Hard assignments (-1 = noise)
-strengths = clusterer.probabilities_ # Soft membership scalar per point
-```
-
-**Confidence:** HIGH for algorithm choice; MEDIUM for whether sklearn's HDBSCAN or the standalone package is sufficient for full multinomial soft assignments (verify at Phase 1).
-
----
-
-### State Management
-
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| Python dataclasses / TypedDict | stdlib | LangGraph state schema definition | LangGraph requires a TypedDict or dataclass for the graph state object. No extra dependency; type-safe; LangGraph uses it for checkpointing. |
-| Pydantic v2 | 2.x | Validating oracle feedback messages, cluster proposals | Structured LLM output parsing via `.model_validate_json()`; integrates with LangGraph tool calling |
-
-**State object design:**
-
-The LangGraph graph state should contain:
-- `turn_count: int`
-- `current_clusters: list[ClusterState]` — each with label, description, member indices, centroid
-- `soft_assignments: np.ndarray` — shape (N, K)
-- `conversation_history: list[Message]`
-- `oracle_preferences: OraclePreferenceSpec`
-- `contradiction_log: list[Contradiction]`
-- `convergence_signal: ConvergenceSignal | None`
-
-**Confidence:** HIGH — this is standard LangGraph practice.
-
----
-
-### Experiment Tracking
-
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| MLflow | 2.x (2.19+ for LLM tracing) | Logging ablation runs, metrics per turn, convergence curves | Runs entirely local with zero server setup; `mlruns/` directory is created automatically; `mlflow ui` for inspection. No SaaS account needed for a solo/pair academic project. |
-
-**Why MLflow over alternatives:**
-- **vs Weights & Biases**: W&B is developer-friendly with excellent UI, but requires account creation and SaaS dependency. Costs $50-200/user/month for teams; overkill for solo/pair scope.
-- **vs simple JSON logging**: JSON is perfectly viable for early phases. Recommend starting with JSON and migrating to MLflow when ablation experiments begin (Phase 3+). MLflow's run comparison and parameter search are hard to replicate manually once you have 20+ runs.
-- **vs Neptune**: Enterprise-scale, unnecessary here.
-
-**Migration path:** Start with structured JSON logging (`experiments/run_{id}.json`) in Phases 1-2. Introduce MLflow in the ablation phase. This avoids early infrastructure overhead while ensuring the data format is migration-compatible.
-
-**Confidence:** HIGH for MLflow as the right tool when ablations start; HIGH for JSON-first in early phases.
-
----
-
-### CLI / Notebook Interface
-
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| Typer | 0.12+ | CLI entry points, command definition | Built on Click with type-hint-based argument parsing; integrates natively with Rich for styled output; faster boilerplate than raw Click |
-| Rich | 13.x | Terminal formatting: tables for cluster proposals, progress bars, dialogue panels | Makes the conversation loop readable in a terminal; critical for usability during human oracle sessions |
-| Jupyter / IPython | latest | Notebook-based exploration and demo | PROJECT.md explicitly allows notebook scope; useful for interactive development and committee demos |
-
-**CLI design pattern:**
-```
-python main.py run --dataset data/tickets.csv --strategy ask-first --turns 20
-python main.py ablate --strategies all --oracle-persona "domain expert"
-python main.py evaluate --run-id abc123
-```
-
-**Why Typer + Rich:**
-- Typer generates `--help` automatically from type hints; no manual argparse boilerplate.
-- Rich panels and tables are the right output primitive for "show cluster proposal, ask oracle" turns.
-- Typer + Rich is the 2025 standard pairing for Python CLI research tooling.
-
-**Confidence:** HIGH.
-
----
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| `huggingface_hub` | **>=1.7,<2** | Colab→local artifact handoff: upload `embeddings.npy` + `initial_state.json` from Colab, download locally | Already installed transitively (zero new heavy dep). `HfApi.upload_file` / `hf_hub_download` give versioned, resumable, auth'd transfer of arbitrary files via a (private) dataset repo. Cleaner than Google Drive scraping or manual copy; the v1.0 `cached_download` removal is a non-issue because modern sentence-transformers is in use. |
+| `openai` | **>=2.26,<3** | Second embedding backend via `client.embeddings.create(model="text-embedding-3-small", dimensions=...)` | **Same SDK already imported in `src/llm_call.py`** and same key path in `src/llm_key.py` — reuses the `OpenAI` client from `build_client("openai", key)`. No new auth surface. `text-embedding-3-small` defaults to 1536-dim; supports the `dimensions` param to shrink (Matryoshka) if you ever want dim parity with 384. |
+| `ruamel.yaml` | **>=0.18,<0.19** | Read/write versioned oracle config YAML with comment + key-order preservation | Round-trips comments and ordering (PyYAML strips both on write). For *human-edited, version-controlled* config files this keeps git diffs clean and lets configs self-document. PyYAML is the fallback if the team prefers no new dep (see alternatives). |
 
 ### Supporting Libraries
 
 | Library | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
-| numpy | 1.26+ / 2.x | Embedding arrays, soft assignment matrices | Always — core numeric substrate |
-| pandas | 2.x | Dataset loading, result DataFrames | Dataset ingestion and output tabulation |
-| scipy | 1.x | Cosine similarity, hierarchical linkage for cluster tree | Needed for L2-norm, cosine distance pre-processing before HDBSCAN |
-| pytest | 8.x | Unit tests for `f_*` functions | Agent logic functions are pure functions; test them independently |
-| python-dotenv | 1.x | API key management | Keep OpenAI keys out of source code |
-| datasets (HuggingFace) | 3.x | Loading Amazon Reviews 2023, IMDB datasets | Standard interface for the candidate datasets mentioned in PROJECT.md |
+| `pydantic` | **>=2.12,<3** (already present) | Validate the parsed oracle-config dict into a typed `OracleConfig` model (model name, prompt templates, persona, noise params) | Use on every config load — fail-loudly on malformed YAML at the boundary, then pass a typed object inward. Already a dep; no new install. |
+| `pyyaml` | **>=6.0** (already present) | Fallback YAML parser if ruamel is rejected | Only if the team decides write-side comment preservation isn't worth a new dep. |
+| `numpy` | **>=2.4** (already present) | `np.save`/`np.load` for the `.npy` embedding artifact on both Colab and local sides | The artifact format is already `.npy` (see `embedding_store.py`); keep it. Pin the same numpy major (2.x) on Colab to avoid format edge cases. |
 
----
+### Development Tools
 
-## Alternatives Considered
-
-| Category | Recommended | Alternative | Why Not |
-|----------|-------------|-------------|---------|
-| Orchestration | LangGraph 1.1.x | AutoGen 0.4 | AutoGen is conversation-first; explicit graph state and HITL interrupt mechanics require more workaround |
-| Orchestration | LangGraph 1.1.x | CrewAI | YAML role-based; cyclic oracle loop and dynamic state are awkward fits |
-| Orchestration | LangGraph 1.1.x | Raw OpenAI API | Viable but requires manual re-implementation of state, checkpointing, HITL pause/resume |
-| Embeddings | sentence-transformers (local) | OpenAI text-embedding-3-small | API dependency, non-reproducible across model versions, no advantage for fixed offline dataset |
-| Embeddings | all-mpnet-base-v2 | all-MiniLM-L6-v2 | MiniLM is 5x faster but 3-4% weaker on clustering benchmarks; speed not a bottleneck here |
-| Clustering | HDBSCAN (sklearn) | k-means | k-means requires K upfront, produces hard labels only; HDBSCAN is strictly more appropriate given soft-assignment and hierarchy requirements |
-| Clustering | HDBSCAN (sklearn) | GMM (Gaussian Mixture) | GMM gives full probability distributions but assumes Gaussian structure in embedding space — not warranted |
-| Tracking | MLflow (local) + JSON-first | Weights & Biases | W&B requires SaaS account; unnecessary external dependency for solo/pair scope |
-| CLI | Typer + Rich | argparse | argparse is stdlib but verbose; Typer removes boilerplate without adding meaningful risk |
-
----
+| Tool | Purpose | Notes |
+|------|---------|-------|
+| Google Colab (notebook) | Compute-only GPU runtime: load dataset → embed (sentence-transformers on GPU) → initial KMeans → upload artifacts to HF Hub | NOT a deploy target. No FastAPI/socketio ever runs on Colab. The notebook is a thin script: read JSONL, encode, fit KMeans, `np.save`, `HfApi.upload_file`. |
+| HF private dataset repo | Transport bucket for `embeddings.npy` + `initial_state.json` + a `manifest.json` (model name, dim, dataset hash) | `repo_type="dataset"`, `private=True`. Token via `HF_TOKEN` env var, resolved the same no-overwrite `.env` way as `src/llm_key.py`. |
 
 ## Installation
 
 ```bash
-# Core orchestration
-pip install langgraph langchain-core langchain-openai
+# New for v2.0 (run in the LOCAL venv)
+pip install "ruamel.yaml>=0.18,<0.19"
 
-# Embeddings
-pip install sentence-transformers
+# Already installed locally — bump the requirements.txt floors to match reality:
+#   huggingface_hub>=1.7,<2     (currently transitive/unpinned)
+#   openai>=2.26,<3             (requirements.txt currently says >=1.30)
+#   sentence-transformers>=5.4  (requirements.txt currently says >=2.7 — STALE)
+#   pydantic>=2.12 ; pyyaml>=6.0 ; numpy>=2.4 ; scikit-learn>=1.8   (already present)
 
-# Clustering
-pip install scikit-learn>=1.6  # HDBSCAN included since 1.3
-pip install hdbscan            # Optional: only if full multinomial soft assignments needed
-
-# CLI + formatting
-pip install typer rich
-
-# Experiment tracking (introduce at ablation phase)
-pip install mlflow
-
-# Data + utilities
-pip install numpy pandas scipy datasets python-dotenv
-
-# Development
-pip install pytest ipykernel jupyter
+# On the Colab side (compute-only notebook), the runtime ships torch+CUDA; add:
+pip install -q "sentence-transformers>=5.4" "huggingface_hub>=1.7,<2"
 ```
 
-**Estimated install size:** ~2.5 GB (dominated by sentence-transformers + torch for CPU inference).
+## Integration Points with Existing Stack
 
-**Python version:** 3.11 or 3.12. LangGraph 1.1.x, sentence-transformers 5.x, and scikit-learn 1.6+ all support 3.12; use 3.11 for maximum compatibility with older transitive dependencies.
+**1. Colab → local artifact handoff (HF Hub)**
+- Colab notebook produces a bundle:
+  - `embeddings.npy` — shape `(N, dim)` float32 (dim = 384 or 1536 depending on the backend used in Colab)
+  - `initial_state.json` — the KMeans initial clustering (labels + soft probs) so local startup skips compute entirely
+  - `manifest.json` — `{embedding_backend, embedding_model, embedding_dim, dataset_sha256, n_items, created_utc}` so the local side can assert the artifact matches the expected dataset/backend (fail-loudly).
+- Upload via `HfApi().upload_file(path_or_fileobj=..., path_in_repo=..., repo_id=..., repo_type="dataset")`.
+- Local side downloads via `hf_hub_download(repo_id, filename, repo_type="dataset")`, then `EmbeddingStore.load(path)` consumes the `.npy` unchanged.
+- `HF_TOKEN` resolved through the existing `.env` mechanism (extend the `src/llm_key.py` pattern or add a tiny `hf_key.py` mirror). Boundary-only error handling per fail-loudly rule.
 
----
+**2. Pluggable embedding backend (dynamic dim)**
+- Mirror the existing `ClusteringBackend` `typing.Protocol` with an `EmbeddingBackend` Protocol: `encode(texts: list[str]) -> np.ndarray` plus a `dim: int` property.
+  - `SentenceTransformerBackend` — wraps current code; `dim` from `model.get_sentence_embedding_dimension()`.
+  - `OpenAIEmbeddingBackend` — calls `client.embeddings.create(model="text-embedding-3-small", input=batch, dimensions=...)`; reuse `build_client("openai", key)` from `llm_call.py`. **Batch ≤ 2048 inputs per request and ≤ 8192 tokens per input** (OpenAI hard limits); chunk accordingly and concatenate. Returns `np.array([d.embedding for d in resp.data], dtype=np.float32)`.
+- **Dynamic dimension migration (required):** `EMBEDDING_DIM = 384` is currently a hardcoded constant asserted across `embedding_store.py`. Replace with a value carried on the store (set from `embeddings.shape[1]` at load, or from the backend's `dim`), and rewrite the `assert embeddings.shape[1] == EMBEDDING_DIM` checks to assert against the *expected dim recorded in the manifest/config*, not a literal. **Keep the assert** (fail-loudly) — only make the expected value dynamic. Also note the file's stale comments referencing `all-mpnet-base-v2`/768 while the constant is 384 — clean those up during this migration.
 
-## Version Summary Table
+**3. Versioned oracle configs (YAML)**
+- Store under e.g. `configs/oracle/<name>.yaml`, version-controlled in git (NOT in `experiments.db` — locked decision).
+- Load: `ruamel.yaml.YAML(typ="rt")` → dict → `OracleConfig.model_validate(dict)` (pydantic). Validation failure = crash at the boundary.
+- Persist the resolved config (or its sha) into the existing audit log / `experiments` row so each run records exactly which config version produced it.
 
-| Library | Pinned Version | Confidence |
-|---------|---------------|------------|
-| langgraph | ~=1.1.0 | HIGH |
-| langchain-core | ~=0.3.0 | HIGH |
-| langchain-openai | ~=0.3.0 | HIGH |
-| openai | ~=1.0 | HIGH |
-| sentence-transformers | ~=5.3.0 | HIGH |
-| scikit-learn | >=1.6,<2.0 | HIGH |
-| hdbscan (standalone) | ~=0.8.1 | MEDIUM (use only if sklearn insufficient) |
-| numpy | >=1.26 | HIGH |
-| pandas | >=2.0 | HIGH |
-| scipy | >=1.11 | HIGH |
-| typer | >=0.12 | HIGH |
-| rich | >=13.0 | HIGH |
-| mlflow | >=2.19 | HIGH |
-| datasets | >=3.0 | MEDIUM |
-| pytest | >=8.0 | HIGH |
-| python-dotenv | >=1.0 | HIGH |
+## Alternatives Considered
 
----
+| Recommended | Alternative | When to Use Alternative |
+|-------------|-------------|-------------------------|
+| HF Hub for Colab→local transfer | Google Drive mount + manual download | If offline from HF or wanting zero external accounts; loses versioning/auth and is fiddly to script. |
+| HF Hub | `gdown` / direct Drive API | Only if artifacts must stay inside Google's ecosystem; HF gives cleaner private versioned repos. |
+| `ruamel.yaml` | `PyYAML` (already installed) | If configs are never hand-edited or comment/order preservation on write doesn't matter — then skip the new dep and use `yaml.safe_load`. |
+| `text-embedding-3-small` (1536) | `text-embedding-3-large` (3072) | Higher quality at ~6.5x cost; not needed for 3–10 cluster research scale. |
+| OpenAI `dimensions` param to shrink to 384 | Keep native 1536 | Only shrink for apples-to-apples dim parity with MiniLM in an ablation; otherwise keep native dim and let `EMBEDDING_DIM` be dynamic. |
 
-## Critical Stack Decisions for Roadmap
+## What NOT to Use
 
-1. **LangGraph is the single source of truth for agent state.** All three agents are LangGraph nodes or subgraphs. The shared TypedDict state flows through the graph. This eliminates ad-hoc global state and makes HITL pausing straightforward via `interrupt()`.
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| `eventlet` / `gevent` | HARD project rule — they monkey-patch stdlib (threading/socket/time) and corrupt numpy/sklearn/UMAP internals. The new embedding/Colab work touches numpy heavily. | uvicorn native asyncio (unchanged); CPU work in `threading.Thread`. |
+| Replacing/abandoning `uvicorn` | The interactive UI stays local and unchanged; Colab is compute-ONLY and runs no server. | Keep FastAPI + uvicorn + python-socketio exactly as is. |
+| Running FastAPI/socketio on Colab | Colab is for heavy compute only; tunneling a socket server from Colab adds fragility for zero benefit. | Produce artifacts on Colab, serve UI locally. |
+| Pinning `huggingface_hub<1.0` "for safety" | Unnecessary — local already runs hf_hub 1.7.1 with sentence-transformers 5.4.1 successfully. Down-pinning would break the working install. | `huggingface_hub>=1.7,<2`. |
+| A second/different LLM SDK for OpenAI embeddings | The `openai` SDK is already imported in `src/llm_call.py`; embeddings live on the same client. | Reuse `build_client("openai", key)` → `client.embeddings.create(...)`. |
+| Hardcoding a new `EMBEDDING_DIM` literal (e.g. 1536) | Repeats the original bug; backends now have different dims. | Carry dim dynamically from the manifest/backend and assert against it. |
+| Storing oracle configs in `experiments.db` | Locked milestone decision: configs are versioned YAML files in git. | YAML files under `configs/`. |
+| Hand-rolled `aiohttp`/`requests` HF transfer | hf_hub already wraps resumable, auth'd, versioned transfer (now on httpx). | `huggingface_hub` API. |
 
-2. **Embeddings are computed once at startup, not per turn.** Pre-compute and cache the embedding matrix. Oracle feedback operates on cluster memberships, not raw text — the embedding layer is fixed after initialization.
+## Stack Patterns by Variant
 
-3. **JSON-first logging, MLflow from Phase 3.** Early phases produce one or two runs; JSON is sufficient. When ablation experiments begin (3-5 strategies × N runs), migrate to MLflow. Design JSON schema to be MLflow-compatible from day one.
+**If embedding on Colab GPU (the motivating case — local torch is CPU-only):**
+- Run sentence-transformers (or OpenAI API) in the notebook, `np.save` + `HfApi.upload_file`.
+- Local side never loads `torch` for embedding when an artifact exists — just `EmbeddingStore.load`.
 
-4. **HDBSCAN soft assignments via `probabilities_` from sklearn.** Verify whether scalar membership strength is sufficient for the soft-assignment requirement, or whether full multinomial probability vectors (requiring standalone `hdbscan` package's `all_points_membership_vectors`) are needed. This is a Phase 1 decision point.
+**If using the OpenAI embedding backend:**
+- No GPU needed anywhere; embedding is an API call. Colab offload becomes optional (cost/latency tradeoff). Batch ≤2048 inputs, ≤8192 tokens each; dim = 1536 (or set `dimensions=384`).
 
-5. **Model-agnostic via LangChain abstractions.** Use `ChatOpenAI` (or `ChatAnthropic`, `ChatGoogleGenerativeAI`) rather than the raw `openai` SDK in agent logic. Swapping the underlying model for ablations then requires changing one config value, not refactoring agent code.
+**If staying fully local + sentence-transformers:**
+- Current path works but is CPU-bound (torch 2.11.0+cpu; the existing docstring estimates ~10–30 min for 12K texts) — this is exactly the latency Colab offload removes.
 
----
+## Version Compatibility
+
+| Package A | Compatible With | Notes |
+|-----------|-----------------|-------|
+| `huggingface_hub@1.7.1` | `sentence-transformers@5.4.1` | Verified working in the live local env. The `cached_download` removal in hf_hub 1.0 only breaks sentence-transformers <3.x. |
+| `huggingface_hub@1.x` | hf_xet + httpx backend | 1.0 migrated transport to httpx (already a dep: `httpx>=0.27`) and uses hf_xet for transfers — no action needed. |
+| `requirements.txt` `sentence-transformers>=2.7` | **MISMATCH** | Stale floor; installed is 5.4.1. Bump to `>=5.4` so a future resolver can't pull a 2.x incompatible with hf_hub 1.x. |
+| `requirements.txt` `openai>=1.30` | installed `2.26.0` | Embeddings API stable across 1.x/2.x; bump floor to `>=2.26,<3` to match local and cap the major. |
+| `numpy@2.4` on Colab vs local | `.npy` format | Keep both on numpy 2.x; `.npy` is stable within a major but pin to be safe. |
+| `ruamel.yaml@0.18.x` | pydantic 2.x | Independent — ruamel parses to dict/CommentedMap, pydantic validates the dict. No interaction risk. |
 
 ## Sources
 
-- LangGraph GitHub (version 1.1.10, April 2026): https://github.com/langchain-ai/langgraph
-- LangGraph overview docs: https://docs.langchain.com/oss/python/langgraph/overview
-- DataCamp: CrewAI vs LangGraph vs AutoGen: https://www.datacamp.com/tutorial/crewai-vs-langgraph-vs-autogen
-- OpenAgents multi-framework comparison (2026): https://openagents.org/blog/posts/2026-02-23-open-source-ai-agent-frameworks-compared
-- scikit-learn HDBSCAN docs (1.8.0): https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html
-- sentence-transformers releases (v5.3.0): https://github.com/huggingface/sentence-transformers/releases/tag/v5.3.0
-- all-mpnet-base-v2 vs all-MiniLM-L6-v2 comparison: https://milvus.io/ai-quick-reference/what-are-some-popular-pretrained-sentence-transformer-models-and-how-do-they-differ-for-example-allminilml6v2-vs-allmpnetbasev2
-- OpenAI API pricing (2026): https://openai.com/api/pricing/
-- MLflow local tracking: https://mlflow.org/docs/latest/ml/tracking/quickstart/
-- Typer + Rich CLI guide: https://dasroot.net/posts/2026/01/building-cli-tools-with-typer-and-rich/
-- HDBSCAN soft clustering docs: https://hdbscan.readthedocs.io/en/latest/soft_clustering.html
+- [huggingface-hub · PyPI](https://pypi.org/project/huggingface-hub/) — current 1.x line, upload/download API — HIGH
+- [huggingface_hub v1.0 blog](https://huggingface.co/blog/huggingface-hub-v1) — httpx migration, hf_xet, `cached_download` removal — HIGH
+- [sentence-transformers issue #1602](https://github.com/huggingface/sentence-transformers/issues/1602) — cached_download ImportError on old sentence-transformers — HIGH
+- [text-embedding-3-small | OpenAI API](https://developers.openai.com/api/docs/models/text-embedding-3-small) — default 1536-dim, `dimensions` param — HIGH
+- [Vector embeddings | OpenAI API](https://developers.openai.com/api/docs/guides/embeddings) — 8192-token input limit, ≤2048 array limit — HIGH
+- [ruamel.yaml · PyPI](https://pypi.org/project/ruamel.yaml/) — round-trip comment/order preservation vs PyYAML — HIGH
+- Live local interpreter probe (2026-05-21) — exact installed versions incl. torch 2.11.0+cpu — HIGH
+
+---
+*Stack research for: conversational-clustering v2.0 (Colab offload, pluggable embeddings, versioned YAML configs)*
+*Researched: 2026-05-21*
