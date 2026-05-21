@@ -14,9 +14,10 @@ No try/except (fail-loudly per CLAUDE.md).
 from __future__ import annotations
 
 
+import os as _os
 DEFAULT_MODELS: dict[str, str] = {
     "anthropic": "claude-haiku-4-5",
-    "openai": "gpt-4.1-nano",
+    "openai": _os.environ.get("OPENAI_MODEL", "gpt-4.1-nano"),
 }
 
 
@@ -31,8 +32,13 @@ def build_client(provider: str, api_key: str) -> tuple[str, object]:
     if provider == "anthropic":
         import anthropic
         return (provider, anthropic.Anthropic(api_key=api_key))
+    import os
     from openai import OpenAI
-    return (provider, OpenAI(api_key=api_key))
+    base_url = os.environ.get("OPENAI_BASE_URL")
+    kwargs = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+    return (provider, OpenAI(**kwargs))
 
 
 def chat(

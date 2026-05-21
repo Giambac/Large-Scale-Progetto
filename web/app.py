@@ -1103,11 +1103,20 @@ def _run_study_background(session_id: str) -> None:
                 continue
 
         # ── Parse and apply feedback ─────────────────────────────────────────
-        deltas = parse_feedback(human_text, current_state, _client)
-
-        new_state = f_next_state(
-            current_state, deltas, store, namer, hierarchy, id_to_text, []
-        )
+        new_state = current_state
+        try:
+            deltas = parse_feedback(human_text, current_state, _client)
+            new_state = f_next_state(
+                current_state, deltas, store, namer, hierarchy, id_to_text, []
+            )
+        except (AssertionError, KeyError, ValueError) as exc:
+            emitter.emit("study_state", _build_study_state_payload(current_state))
+            emitter.emit("study_awaiting_feedback", {})
+            setStatus_msg = f"[error applying feedback — try rephrasing] {type(exc).__name__}: {exc}"
+            log.warning("[study] feedback error: %s", exc)
+            turn_index += 1
+            sess["turn_index"] = turn_index
+            continue
 
         # Write state.json and audit log
         _write_session_state(new_state, session_dir)
@@ -1133,6 +1142,23 @@ def _run_study_background(session_id: str) -> None:
 
         # Emit updated study_state
         emitter.emit("study_state", _build_study_state_payload(current_state))
+
+        # Re-emit projection with updated per_cluster after every turn
+        sorted_cluster_ids = sorted({c.id for c in current_state.clusters})
+        updated_cluster_colors = {
+            str(cid): _CLUSTER_COLORS[idx % len(_CLUSTER_COLORS)]
+            for idx, cid in enumerate(sorted_cluster_ids)
+        }
+        updated_per_cluster = {
+            str(c.id): {"item_ids": c.item_ids, "name": c.name, "description": c.description}
+            for c in current_state.clusters
+        }
+        emitter.emit("study_projection", {
+            "coords": coords.tolist(),
+            "cluster_colors": updated_cluster_colors,
+            "global_bounds": {"x_min": x_min, "x_max": x_max, "y_min": y_min, "y_max": y_max},
+            "per_cluster": updated_per_cluster,
+        })
 
     # Turn budget exhausted
     _end_study_session(session_id, "turn_budget")
@@ -1253,7 +1279,6 @@ def _run_watch_background(session_id: str) -> None:
     if watch_session_name:
         with open(os.path.join(session_dir, "name.txt"), "w", encoding="utf-8") as _f:
             _f.write(watch_session_name)
-        log.info("[watch] Session name: %s", watch_session_name)
 
     def _build_study_state_payload(st):
         return {
@@ -1426,7 +1451,7 @@ def _detect_satisfaction(human_text: str, client: tuple) -> bool:
         f"Does this message indicate the user is satisfied with the clustering? "
         f"Reply YES or NO only. Message: {human_text}"
     )
-    answer = chat(client, system=None, user=prompt, max_tokens=4)
+    answer = chat(client, system=None, user=prompt, max_tokens=16)
     return answer.strip().upper() == "YES"
 
 

@@ -82,15 +82,42 @@ class HDBSCANBackend:
         """
         Fit HDBSCAN and return (labels, soft_probs).
         Noise labels (-1) are resolved to the nearest cluster via argmax(soft_probs).
+        If HDBSCAN produces 0 clusters, retries with progressively smaller
+        min_cluster_size (halved each attempt) down to a minimum of 5.
         """
-        t0 = time.perf_counter()                          # ← aggiungi
-        labels, soft_probs = run_hdbscan(
-            embeddings,
-            min_cluster_size=self._min_cluster_size,
-            min_samples=self._min_samples,
+        n_items = embeddings.shape[0]
+        base_mcs = (
+            self._min_cluster_size
+            if self._min_cluster_size is not None
+            else max(5, min(MIN_CLUSTER_SIZE, n_items // 10))
         )
-        print(f"[timing] run_hdbscan: {time.perf_counter() - t0:.2f}s")
-        # Resolve noise points so labels has no -1 values
+
+        labels, soft_probs = None, None
+        mcs = base_mcs
+        while mcs >= 5:
+            try:
+                t0 = time.perf_counter()
+                labels, soft_probs = run_hdbscan(
+                    embeddings,
+                    min_cluster_size=mcs,
+                    min_samples=self._min_samples,
+                )
+                print(f"[timing] run_hdbscan (min_cluster_size={mcs}): {time.perf_counter() - t0:.2f}s")
+                break  # success
+            except AssertionError:
+                print(f"[hdbscan] 0 clusters with min_cluster_size={mcs}, retrying with {max(5, mcs // 2)}")
+                mcs = max(5, mcs // 2)
+                if mcs == 5 and labels is None:
+                    # Last attempt with minimum value
+                    t0 = time.perf_counter()
+                    labels, soft_probs = run_hdbscan(
+                        embeddings,
+                        min_cluster_size=5,
+                        min_samples=1,
+                    )
+                    print(f"[timing] run_hdbscan (min_cluster_size=5, fallback): {time.perf_counter() - t0:.2f}s")
+                    break
+
         assignments = assign_noise_to_nearest(labels, soft_probs)
         resolved_labels = np.array(
             [assignments[i] for i in range(len(labels))], dtype=np.intp
@@ -163,31 +190,59 @@ class KMeansBackend:
 
     def _select_k_via_bic(self, embeddings: np.ndarray) -> int:
         """
-        Fit GMM for K=2..int(sqrt(N)) and return K that minimizes BIC (D-17).
+        Select K via Silhouette score on a PCA-reduced sample.
 
-        For N=12000 this is K=2..109. Each GMM fit uses 'diag' covariance for speed
-        (full covariance on 768-dim data would be prohibitively slow).
-        K is logged externally by the caller (web/app.py) for AuditLog reproducibility.
+        Strategy:
+        - Reduce to 50 dims via PCA for speed
+        - Test K=2..K_MAX on a sample of max 2000 points
+        - Pick K with highest mean silhouette score
+        - K_MAX scales with dataset size: min(20, max(5, N // 1000))
+          2K items → max 5, 7K → max 7, 15K → max 15, 20K → max 20
         """
+        from sklearn.decomposition import PCA
+        from sklearn.metrics import silhouette_score
+        from sklearn.cluster import MiniBatchKMeans
+
         N = embeddings.shape[0]
-        k_max = max(2, int(math.sqrt(N)))
+        K_MIN = max(3, N // 2000)   # almeno 3, scala con dataset
+        K_MAX = min(20, max(8, N // 1000))
+
+        # PCA reduction for speed
+        n_components = min(50, embeddings.shape[1], N - 1)
+        pca = PCA(n_components=n_components, random_state=42)
+        reduced = pca.fit_transform(embeddings)
+
+        # Sample for silhouette (expensive on large N)
+        sample_size = min(2000, N)
+        rng = np.random.default_rng(42)
+        idx = rng.choice(N, size=sample_size, replace=False)
+        sample = reduced[idx]
+
         best_k = 2
-        best_bic = float("inf")
-        for k in range(2, k_max + 1):
-            gm = GaussianMixture(
-                n_components=k,
-                covariance_type="diag",
-                random_state=0,
-                max_iter=50,      # limit iterations for speed
-                n_init=1,
+        best_score = -1.0
+
+        for k in range(K_MIN, K_MAX + 1):
+            km = MiniBatchKMeans(
+                n_clusters=k,
+                random_state=42,
+                n_init=3,
+                batch_size=1024,
             )
-            gm.fit(embeddings)
-            bic = gm.bic(embeddings)
-            if bic < best_bic:
-                best_bic = bic
+            labels = km.fit_predict(sample)
+            if len(set(labels)) < k:
+                continue
+            score = silhouette_score(
+                sample, labels, metric="euclidean",
+                sample_size=min(1000, sample_size)
+            )
+            if score > best_score:
+                best_score = score
                 best_k = k
-        assert best_k >= 2, f"BIC selected k={best_k} < 2 — impossible"
+
+        assert best_k >= 2, f"Silhouette selected k={best_k} < 2 — impossible"
+        import logging; logging.getLogger(__name__).info("[kmeans] Silhouette selected K=%d (tested K=%d..%d)", best_k, K_MIN, K_MAX)
         return best_k
+
 
     @staticmethod
     def _compute_soft_probs(
