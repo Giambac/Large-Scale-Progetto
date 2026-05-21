@@ -209,7 +209,8 @@ _args = _parse_args()
 _backend_name: str = _args.backend
 
 # ── Human study session constants (EXP-V2-01, D-13) ─────────────────────────
-STUDY_MAX_TURNS: int = int(os.environ.get("STUDY_MAX_TURNS", "30"))
+STUDY_MAX_TURNS: int = int(os.environ.get("STUDY_MAX_TURNS", "15"))
+WATCH_MAX_TURNS: int = int(os.environ.get("WATCH_MAX_TURNS", "15"))
 _study_sessions: dict = {}  # session_id -> study session state dict
 
 # ── Module-level session state (single session per server run, D-15) ─────────
@@ -397,6 +398,14 @@ async def upload_dataset(file: UploadFile = File(...), backend: str = Form("hdbs
     if len(records) < 2:
         raise HTTPException(status_code=400, detail=f"Dataset too small: {len(records)} records (need >= 2)")
 
+    # Save uploaded file to disk so /watch/sessions can reference it by path
+    os.makedirs("uploads", exist_ok=True)
+    safe_name = os.path.basename(file.filename or "dataset.jsonl")
+    upload_path = os.path.join("uploads", safe_name)
+    with open(upload_path, "wb") as _uf:
+        _uf.write(raw)
+    _session["last_upload_path"] = upload_path
+
     with _session_lock:
         _session["state"] = None
         _session["task"] = None
@@ -408,7 +417,7 @@ async def upload_dataset(file: UploadFile = File(...), backend: str = Form("hdbs
         t.start()
         _session["task"] = t
 
-    return JSONResponse({"status": "session_started", "records": len(records)}, status_code=200)
+    return JSONResponse({"status": "session_started", "records": len(records), "dataset_path": upload_path}, status_code=200)
 
 
 # ── Background task ───────────────────────────────────────────────────────────
@@ -1238,6 +1247,14 @@ def _run_watch_background(session_id: str) -> None:
     sess["watch_chat"] = []   # populated below for replay-on-load
     emitter.emit("study_projection", _projection_payload)
 
+    # Generate and save human-readable session name
+    cluster_names = [c.name for c in state.clusters]
+    watch_session_name = _generate_session_name(namer, cluster_names)
+    if watch_session_name:
+        with open(os.path.join(session_dir, "name.txt"), "w", encoding="utf-8") as _f:
+            _f.write(watch_session_name)
+        log.info("[watch] Session name: %s", watch_session_name)
+
     def _build_study_state_payload(st):
         return {
             "clusters": [
@@ -1279,7 +1296,7 @@ def _run_watch_background(session_id: str) -> None:
     turn_index = 0
     current_state = state
 
-    while turn_index < STUDY_MAX_TURNS:
+    while turn_index < WATCH_MAX_TURNS:
         if sess["ended"]:
             return
 
@@ -1361,6 +1378,25 @@ def _run_watch_background(session_id: str) -> None:
         _state_payload = _build_study_state_payload(current_state)
         sess["watch_state"] = _state_payload
         emitter.emit("study_state", _state_payload)
+
+        # Re-emit projection with updated per_cluster after every turn
+        sorted_cluster_ids = sorted({c.id for c in current_state.clusters})
+        updated_cluster_colors = {
+            str(cid): _CLUSTER_COLORS[idx % len(_CLUSTER_COLORS)]
+            for idx, cid in enumerate(sorted_cluster_ids)
+        }
+        updated_per_cluster = {
+            str(c.id): {"item_ids": c.item_ids, "name": c.name, "description": c.description}
+            for c in current_state.clusters
+        }
+        updated_projection = {
+            "coords": coords.tolist(),
+            "cluster_colors": updated_cluster_colors,
+            "global_bounds": {"x_min": x_min, "x_max": x_max, "y_min": y_min, "y_max": y_max},
+            "per_cluster": updated_per_cluster,
+        }
+        sess["watch_projection"] = updated_projection
+        emitter.emit("study_projection", updated_projection)
 
         if reply.satisfied:
             _end_study_session(session_id, "oracle_satisfied")

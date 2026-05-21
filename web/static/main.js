@@ -9,6 +9,13 @@
 
 const socket = io();
 
+// Debug: log tutti gli eventi socket in arrivo
+var _origOnevent = socket.onevent;
+socket.onevent = function(packet) {
+    console.log('[socket event]', packet.data[0], packet.data.length > 1 ? '(data)' : '');
+    _origOnevent.call(this, packet);
+};
+
 // D-28: pairwise accuracy history for sparkline (last 10 turns)
 const _pairwiseHistory = [];
 const _SPARKLINE_MAX = 10;
@@ -36,26 +43,26 @@ function renderSessionsList(sessions) {
         li.className = 'session-item';
         li.title = 'Click to resume session ' + s.session_id;
         li.innerHTML =
-            '<span class="session-ts">' + escapeHtml(s.name || s.timestamp) + '</span> ' +
-            '<span class="session-meta">' + s.cluster_count + ' clusters, turn ' + s.turn_count + '</span>';
+            '<span class="session-ts">' + escapeHtml(s.name || s.timestamp) + '</span>' +
+            '<br><span class="session-meta">' + s.cluster_count + ' clusters, turn ' + s.turn_count + '</span>';
         li.addEventListener('click', function () { resumeSession(s.session_id); });
         list.appendChild(li);
     });
 }
 
 function resumeSession(sessionId) {
-    document.getElementById('status-banner').textContent = 'Status: Resuming session ' + sessionId + '...';
+    document.getElementById('status-banner').textContent = 'Status: Resuming...';
     fetch('/resume/' + encodeURIComponent(sessionId), { method: 'POST' })
         .then(function (r) { return r.json(); })
         .then(function (data) {
             document.getElementById('status-banner').textContent =
-                'Status: Resumed — ' + sessionId + ' (turn ' + data.turn_index + ')';
+                'Status: Resumed';
             // state_update will be emitted by server via SocketIO; UI updates automatically
             loadSessionsList();  // refresh session list to show updated turn count
         })
         .catch(function (err) {
             document.getElementById('status-banner').textContent =
-                'Status: Resume failed — ' + err;
+                'Status: Resume failed';
         });
 }
 
@@ -85,7 +92,7 @@ socket.on('state_update', function (data) {
 
 socket.on('session_stopped', function (data) {
     document.getElementById('status-banner').textContent =
-        'Status: Stopped — ' + data.reason;
+        'Status: Stopped';
     // Update convergence signal display on stop
     const convEl = document.getElementById('convergence-signal');
     if (convEl) {
@@ -115,16 +122,31 @@ socket.on('progress_update', function (data) {
 });
 
 function drawProjection(coords, clusterIds, maxProbs, clusterColors) {
-    const canvas = document.getElementById('projection-canvas');
-    if (!canvas) return;
+    // Render global UMAP into #mini-plots-container as a single full-width canvas.
+    const container = document.getElementById('mini-plots-container');
+    if (!container) return;
+    if (!coords || coords.length === 0) return;
+
+    // Reuse or create the canvas
+    var canvas = document.getElementById('projection-canvas-global');
+    if (!canvas) {
+        canvas = document.createElement('canvas');
+        canvas.id = 'projection-canvas-global';
+        canvas.style.cssText = 'width:100%;height:100%;border:1px solid #ddd;border-radius:4px;background:#fff;display:block;';
+        container.innerHTML = '';
+        container.appendChild(canvas);
+    }
+
+    // Size to container
+    canvas.width  = container.clientWidth  || 600;
+    canvas.height = container.clientHeight || 400;
+
     const ctx = canvas.getContext('2d');
     const W = canvas.width;
     const H = canvas.height;
     ctx.clearRect(0, 0, W, H);
 
-    if (!coords || coords.length === 0) return;
-
-    // Compute bounding box for normalization
+    // Bounding box for normalization
     const xs = coords.map(function (p) { return p[0]; });
     const ys = coords.map(function (p) { return p[1]; });
     const xMin = Math.min.apply(null, xs);
@@ -133,7 +155,7 @@ function drawProjection(coords, clusterIds, maxProbs, clusterColors) {
     const yMax = Math.max.apply(null, ys);
     const xRange = xMax - xMin || 1;
     const yRange = yMax - yMin || 1;
-    const margin = 20;  // pixels
+    const margin = 24;
 
     function toCanvas(x, y) {
         return [
@@ -142,15 +164,14 @@ function drawProjection(coords, clusterIds, maxProbs, clusterColors) {
         ];
     }
 
-    // Draw each point
     coords.forEach(function (coord, idx) {
         const clusterId = String(clusterIds[idx]);
         const color = clusterColors[clusterId] || '#888888';
-        const opacity = 0.3 + 0.7 * (maxProbs[idx] || 0.5);  // range [0.3, 1.0]
-        const [cx, cy] = toCanvas(coord[0], coord[1]);
+        const opacity = 0.3 + 0.7 * (maxProbs[idx] || 0.5);
+        const pos = toCanvas(coord[0], coord[1]);
 
         ctx.beginPath();
-        ctx.arc(cx, cy, 3, 0, 2 * Math.PI);
+        ctx.arc(pos[0], pos[1], 3, 0, 2 * Math.PI);
         ctx.fillStyle = hexToRgba(color, opacity);
         ctx.fill();
     });
@@ -275,16 +296,21 @@ document.getElementById('upload-form').addEventListener('submit', function (e) {
     }
     const formData = new FormData();
     formData.append('file', fileInput.files[0]);
-    formData.append('backend', document.getElementById('backend-select').value);
+    formData.append('backend', document.getElementById('watch-backend').value);
     document.getElementById('status-banner').textContent = 'Status: Uploading...';
     fetch('/upload', { method: 'POST', body: formData })
         .then(function (r) { return r.json(); })
         .then(function (data) {
             document.getElementById('status-banner').textContent =
-                'Status: Session started — ' + data.records + ' records';
+                'Status: Started';
+            // Aggiorna il dataset_path per Start Watch
+            if (data.dataset_path) {
+                var dsField = document.getElementById('watch-dataset');
+                if (dsField) dsField.value = data.dataset_path;
+            }
         })
         .catch(function (err) {
-            document.getElementById('status-banner').textContent = 'Status: Upload failed — ' + err;
+            document.getElementById('status-banner').textContent = 'Status: Upload failed';
         });
 });
 
@@ -295,3 +321,209 @@ function escapeHtml(str) {
         .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+
+// ── Watch mode: cluster e projection ─────────────────────────────
+socket.on('study_state', function (data) {
+    // data = { clusters: [{ id, name, description, sample_items }] }
+    renderWatchClusterCards(data.clusters);
+});
+
+socket.on('study_projection', function (data) {
+    // data = { coords, cluster_colors, global_bounds, per_cluster }
+    console.log('[study_projection] received, clusters:', data.per_cluster ? Object.keys(data.per_cluster).length : 'null');
+    renderWatchMiniPlots(data);
+});
+
+socket.on('watch_agent_message', function (data) {
+    appendWatchBubble('agent', data.turn, data.text);
+});
+
+socket.on('watch_oracle_turn', function (data) {
+    appendWatchBubble('oracle', data.turn, data.text);
+    if (data.satisfied) {
+        var banner = document.getElementById('session-complete-banner');
+        if (banner) banner.classList.add('visible');
+    }
+});
+
+socket.on('study_ended', function (data) {
+    document.getElementById('status-banner').textContent = 'Status: Stopped';
+    var banner = document.getElementById('session-complete-banner');
+    if (banner) banner.classList.add('visible');
+    var chatStatus = document.getElementById('chat-status');
+    if (chatStatus) chatStatus.textContent = 'Session ended: ' + (data.convergence_reason || '');
+});
+
+// ── Watch cluster cards renderer ──────────────────────────────────
+function renderWatchClusterCards(clusters) {
+    var container = document.getElementById('cluster-cards-container');
+    if (!container) return;
+    container.innerHTML = '';
+    // Svuota i cluster iniziali dell'upload
+    var uploadCards = document.getElementById('cluster-cards');
+    if (uploadCards) uploadCards.innerHTML = '';
+    clusters.forEach(function (cluster) {
+        var card = document.createElement('div');
+        card.className = 'study-cluster-card';
+
+        var header = document.createElement('div');
+        header.className = 'study-cluster-header';
+
+        var name = document.createElement('span');
+        name.className = 'study-cluster-name';
+        name.textContent = cluster.name;
+
+        var toggle = document.createElement('span');
+        toggle.textContent = '+';
+
+        header.appendChild(name);
+        header.appendChild(toggle);
+
+        var desc = document.createElement('div');
+        desc.className = 'study-cluster-desc';
+        desc.textContent = cluster.description || '';
+
+        var itemsDiv = document.createElement('div');
+        itemsDiv.className = 'study-cluster-items';
+        if (cluster.sample_items && cluster.sample_items.length) {
+            var ul = document.createElement('ul');
+            cluster.sample_items.forEach(function (item) {
+                var li = document.createElement('li');
+                var span = document.createElement('span');
+                span.className = 'study-item';
+                span.textContent = item.text_preview || ('item ' + item.item_id);
+                li.appendChild(span);
+                ul.appendChild(li);
+            });
+            itemsDiv.appendChild(ul);
+        }
+
+        header.addEventListener('click', function () {
+            var isOpen = itemsDiv.classList.contains('open');
+            itemsDiv.classList.toggle('open', !isOpen);
+            toggle.textContent = isOpen ? '+' : '-';
+        });
+
+        card.appendChild(header);
+        card.appendChild(desc);
+        card.appendChild(itemsDiv);
+        container.appendChild(card);
+    });
+}
+
+// ── Watch mini-plot renderer ──────────────────────────────────────
+function renderWatchMiniPlots(data) {
+    var container = document.getElementById('mini-plots-container');
+    if (!container) { console.error('[renderWatchMiniPlots] container not found'); return; }
+
+    var allCoords = data.coords;
+    var clusterColors = data.cluster_colors;
+    var globalBounds = data.global_bounds;
+    var perCluster = data.per_cluster;
+
+    console.log('[renderWatchMiniPlots] allCoords:', allCoords ? allCoords.length : 'null',
+        'globalBounds:', !!globalBounds, 'perCluster keys:', perCluster ? Object.keys(perCluster).length : 'null');
+
+    if (!allCoords || !globalBounds || !perCluster) {
+        console.warn('[renderWatchMiniPlots] missing data, skipping render');
+        return;
+    }
+
+    // Ridisegna tutto da zero — i cluster IDs cambiano ad ogni split/merge
+    // quindi un diff per ID non funziona. Il redraw è solo canvas, non UMAP.
+    container.innerHTML = '';
+
+    Object.keys(perCluster).forEach(function (clusterId) {
+        var clusterData = perCluster[clusterId];
+        var color = clusterColors[clusterId] || '#888888';
+
+        var wrapper = document.createElement('div');
+        wrapper.className = 'mini-plot-wrapper';
+        wrapper.setAttribute('data-cluster-id', clusterId);
+
+        var label = document.createElement('div');
+        label.className = 'mini-plot-label';
+        label.textContent = clusterData.name + ' (' + clusterData.item_ids.length + ')';
+
+        var canvas = document.createElement('canvas');
+        canvas.className = 'mini-plot-canvas';
+        canvas.width = 200;
+        canvas.height = 200;
+
+        wrapper.appendChild(label);
+        wrapper.appendChild(canvas);
+        container.appendChild(wrapper);
+
+        drawWatchMiniPlot(canvas, clusterData.item_ids, allCoords, color, globalBounds);
+    });
+}
+
+function drawWatchMiniPlot(canvas, clusterItemIds, allCoords, clusterColor, globalBounds) {
+    var ctx = canvas.getContext('2d');
+    var W = canvas.width;
+    var H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    var xMin = globalBounds.x_min, xMax = globalBounds.x_max;
+    var yMin = globalBounds.y_min, yMax = globalBounds.y_max;
+    var xRange = xMax - xMin || 1;
+    var yRange = yMax - yMin || 1;
+    var margin = 10;
+
+    function toCanvas(x, y) {
+        return [
+            margin + ((x - xMin) / xRange) * (W - 2 * margin),
+            margin + ((y - yMin) / yRange) * (H - 2 * margin),
+        ];
+    }
+
+    var clusterSet = {};
+    clusterItemIds.forEach(function (id) { clusterSet[id] = true; });
+
+    // sfondo grigio
+    for (var i = 0; i < allCoords.length; i++) {
+        if (clusterSet[i]) continue;
+        var pt = toCanvas(allCoords[i][0], allCoords[i][1]);
+        ctx.beginPath();
+        ctx.arc(pt[0], pt[1], 2, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(150,150,150,0.15)';
+        ctx.fill();
+    }
+
+    // cluster items
+    var r = parseInt(clusterColor.slice(1, 3), 16);
+    var g = parseInt(clusterColor.slice(3, 5), 16);
+    var b = parseInt(clusterColor.slice(5, 7), 16);
+    clusterItemIds.forEach(function (itemId) {
+        var coord = allCoords[itemId];
+        if (!coord) return;
+        var pt = toCanvas(coord[0], coord[1]);
+        ctx.beginPath();
+        ctx.arc(pt[0], pt[1], 3, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
+        ctx.fill();
+    });
+}
+
+// ── Chat bubble renderer ──────────────────────────────────────────
+function appendWatchBubble(role, turn, text) {
+    var log = document.getElementById('chat-log');
+    if (!log) return;
+
+    var wrap = document.createElement('div');
+    var meta = document.createElement('div');
+    meta.className = 'bubble-meta';
+    meta.textContent = role + ' · turn ' + turn;
+
+    var bubble = document.createElement('div');
+    bubble.className = 'bubble ' + (role === 'agent' ? 'bubble-agent' : 'bubble-oracle');
+    bubble.textContent = text;
+
+    wrap.appendChild(meta);
+    wrap.appendChild(bubble);
+    log.appendChild(wrap);
+    log.scrollTop = log.scrollHeight;
+
+    var chatStatus = document.getElementById('chat-status');
+    if (chatStatus) chatStatus.textContent = role === 'agent' ? 'Agent is thinking...' : 'Oracle replied · turn ' + turn;
+}
