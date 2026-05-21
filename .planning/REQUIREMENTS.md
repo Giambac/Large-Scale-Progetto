@@ -101,12 +101,63 @@ These requirements activate when the team grows to 3–4 people or v1 is complet
 
 - **SYNTH-V2-01**: 4th agent for synthetic dataset generation — creates text corpora with known cluster structure for controlled experiments
 
+## Milestone v2.0 Requirements (Experimentation Flexibility & Scale)
+
+**Defined:** 2026-05-21
+**Goal:** Make the system configurable and scalable for research — Colab compute offload, swappable embedding/clustering backends, oracle-initiated flow, query filter, and a coordination agent.
+**Locked decisions:** re-cluster (re-fit KMeans), not re-embed, per query · Colab is compute-only · oracle configs in versioned YAML · coordination agent built last.
+
+### Embedding & Compute
+
+- [ ] **EMB-V2-01**: Embedding dimension is dynamic (carried from the backend/manifest), replacing the hardcoded `EMBEDDING_DIM = 384` constant; fail-loudly asserts retained but with a dynamic expected value
+- [ ] **EMB-V2-02**: A pluggable `EmbeddingBackend` Protocol exposes selectable backends — SentenceTransformer (local, 384) and OpenAI `text-embedding-3-small` (1536) — chosen per run
+- [ ] **EMB-V2-03**: Embedding artifacts carry a provenance manifest (model, dim, normalized flag, library versions, input hash, n_items) validated on load; a content-hash cache prevents re-embedding/re-paying
+
+### Compute Offload (Colab)
+
+- [ ] **COL-V2-01**: A Colab compute-only notebook computes embeddings + the initial clustering and exports artifacts (embeddings, initial state, manifest)
+- [ ] **COL-V2-02**: The local app imports Colab artifacts via HuggingFace Hub, validated against the manifest; the local runtime imports zero Colab-only dependencies
+
+### Clustering
+
+- [ ] **CLUST-V2-01**: KMeans-only interactive clustering — HDBSCAN dropped from the interactive path
+- [ ] **CLUST-V2-02**: KMeans re-fits on each oracle query with embeddings fixed; a cluster-ID alignment step preserves cluster IDs/names across re-fits; K never auto-reoptimizes (changes only via explicit oracle split/merge intent)
+
+### Flow & Onboarding
+
+- [ ] **FLOW-V2-01**: A dataset introduction/summary is presented to the user/oracle before any clustering runs
+- [ ] **FLOW-V2-02**: The oracle issues an initial query that triggers the first clustering; the conversational session then begins. Autonomous-first clustering is retained as an ablation condition
+
+### Query Filter
+
+- [ ] **FILT-V2-01**: A query filter normalizes oracle natural language into simple, contradiction-free clusterer instructions, extending `feedback_parser` + the contradiction layer; it normalizes structure only and does not semantically second-guess oracle intent
+
+### Oracle Configurability
+
+- [ ] **OCFG-V2-01**: The oracle's LLM model is selectable per run (Anthropic or OpenAI)
+- [ ] **OCFG-V2-02**: Oracle prompt/persona/noise configuration is stored in versioned YAML files and validated into a typed config object at load
+
+### Visualization & Chat
+
+- [ ] **VIZ-V2-02**: Interactive UMAP caches 2D projection coordinates once and recolors on cluster change, without per-turn refit
+- [ ] **UX-V2-01**: Human chat works end-to-end in the study UI
+- [ ] **UX-V2-02**: The LLM-oracle conversation is viewable in real time
+
+### Coordination Agent (deferred to last phase)
+
+- [ ] **COORD-V2-01**: A coordination agent decomposes a complex clustering operation into pairwise sub-operations
+- [ ] **COORD-V2-02**: Pairwise sub-operations fan out to N clusterer sessions and recombine into a single authoritative `ClusteringState` (single-source-of-truth invariant preserved; whole-op abort on partial failure)
+
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
 | Automatic K optimization (silhouette, BIC) | Anti-feature: bypasses oracle as objective function; K changes only through oracle intent |
 | Showing raw model internals to oracle | Increases cognitive load without proportional annotation quality gain (Prodigy principle) |
+| Re-embedding the dataset per oracle query (v2.0) | Resolved as re-FIT (KMeans) on fixed embeddings; preserves the read-only EmbeddingStore invariant and avoids cost/geometry churn |
+| Running the FastAPI/socketio UI on Colab (v2.0) | Colab is compute-only; sockets/UI run locally |
+| Query filter that semantically rewrites oracle intent (v2.0) | The oracle IS the objective function; the filter normalizes structure only |
+| eventlet / gevent (v2.0) | Monkey-patches stdlib and corrupts numpy/sklearn/UMAP locking |
 
 ## Traceability
 
@@ -153,4 +204,4 @@ These requirements activate when the team grows to 3–4 people or v1 is complet
 
 ---
 *Requirements defined: 2026-04-29*
-*Last updated: 2026-05-15 — web stack migrated to FastAPI (UI-01/UI-02 wording unchanged)*
+*Last updated: 2026-05-21 — milestone v2.0 requirements added (17 reqs across 7 categories); traceability filled by roadmapper*
