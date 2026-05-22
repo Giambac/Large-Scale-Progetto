@@ -19,9 +19,11 @@ from src.feedback import (
     MoveItemFeedback,
     GlobalFeedback,
     InstructionalFeedback,
+    RenameFeedback,
+    DeleteFeedback,
 )
 
-VALID_FEEDBACK_TYPES = frozenset({"global", "split", "merge", "move_item", "instructional"})
+VALID_FEEDBACK_TYPES = frozenset({"global", "split", "merge", "move_item", "instructional", "rename", "delete"})
 
 _PARSE_FEEDBACK_PROMPT = """
 You are parsing oracle feedback in a clustering conversation.
@@ -33,6 +35,8 @@ Extract ALL feedback intents as a JSON array. Each item has exactly one of these
 - {{"type": "split", "cluster_id": <int>, "seed_item_ids": [<int>, ...]}}
 - {{"type": "merge", "cluster_a_id": <int>, "cluster_b_id": <int>}}
 - {{"type": "move_item", "item_id": <int>, "target_cluster_id": <int>}}
+- {{"type": "rename", "cluster_id": <int>, "new_name": "<str>"}}
+- {{"type": "delete", "cluster_id": <int>}}
 - {{"type": "instructional", "instruction_text": "..."}}
 
 Rules:
@@ -106,6 +110,21 @@ def _build_delta(item: dict, valid_cluster_ids: set[int]) -> FeedbackDelta:
             item_id=item["item_id"],
             target_cluster_id=item["target_cluster_id"],
         )
+
+    if feedback_type == "rename":
+        assert item["cluster_id"] in valid_cluster_ids, (
+            f"parse_feedback: rename cluster_id={item['cluster_id']} not in current clusters {valid_cluster_ids}"
+        )
+        return RenameFeedback(
+            cluster_id=item["cluster_id"],
+            new_name=str(item["new_name"]),
+        )
+
+    if feedback_type == "delete":
+        assert item["cluster_id"] in valid_cluster_ids, (
+            f"parse_feedback: delete cluster_id={item['cluster_id']} not in current clusters {valid_cluster_ids}"
+        )
+        return DeleteFeedback(cluster_id=item["cluster_id"])
 
     # feedback_type == "instructional" (only remaining valid type)
     return InstructionalFeedback(instruction_text=item["instruction_text"])

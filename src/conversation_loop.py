@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Optional, Callable
 
 from src.agent_functions import f_output, f_next_best_step, f_next_state
 from src.feedback_parser import parse_feedback
+from src.interpretation_agent import interpret_feedback
 from src.hierarchy import HierarchyStore
 from src.logging_setup import deviation
 from src.serialization import append_to_audit_log
@@ -304,6 +305,10 @@ def run_conversation(
     state = initial_state
     recent_magnitudes: list[float] = []
 
+    # Interpretation Agent: rolling window of recent turns for context (last 5).
+    # Format: "Turn N - user: <text>" so the agent can resolve references like "merge them".
+    _turn_history: list[str] = []
+
     while True:
         # Step 1: Compute uncertainty
         uncertainty_report = f_uncertainty(state)
@@ -326,10 +331,50 @@ def run_conversation(
             cognitive_load=cognitive_load,
         )
 
-        # Step 4: Parse oracle reply into FeedbackDelta list
-        # parse_feedback is the only permitted try/except boundary in Phase 2.
+        # Step 4: Parse oracle reply into FeedbackDelta list.
+        # The Interpretation Agent runs first: rewrites ambiguous text (positional
+        # references, mixed satisfaction+action) into unambiguous text with real IDs.
+        # Failed turns are logged to failed_turns.jsonl (separate from audit_log.jsonl).
         if llm_client is not None and reply.raw_text.strip():
-            deltas = parse_feedback(reply.raw_text, state, llm_client)
+            # 4a: Normalize via Interpretation Agent (fail-open: returns raw_text on error).
+            _interpreted_text = interpret_feedback(
+                reply.raw_text, state, llm_client, turn_history=_turn_history
+            )
+            # 4b: Update turn history AFTER getting reply, BEFORE parse (last 5 turns).
+            _turn_history.append(f"Turn {state.turn_index} - user: {reply.raw_text}")
+            if len(_turn_history) > 5:
+                _turn_history.pop(0)
+            # 4c: Parse normalized text into delta objects.
+            try:
+                deltas = parse_feedback(_interpreted_text, state, llm_client)
+                if deltas:
+                    print(f"[ConversationLoop] turn {state.turn_index} — {len(deltas)} delta(s) parsed:")
+                    for _d in deltas:
+                        print(f"[ConversationLoop]   {_d}")
+                else:
+                    print(f"[ConversationLoop] turn {state.turn_index} — no deltas (empty feedback)")
+            except (AssertionError, ValueError, KeyError) as _parse_err:
+                import json as _json_mod
+                import datetime as _dt_mod
+                _failed_path = os.path.join(
+                    os.path.dirname(log_path) or ".", "failed_turns.jsonl"
+                )
+                _failed_record = {
+                    "event": "failed_turn",
+                    "timestamp": _dt_mod.datetime.utcnow().isoformat(),
+                    "turn_index": state.turn_index,
+                    "raw_text": reply.raw_text,
+                    "interpreted_text": _interpreted_text,
+                    "error": repr(_parse_err),
+                }
+                with open(_failed_path, "a", encoding="utf-8") as _fh:
+                    _fh.write(_json_mod.dumps(_failed_record) + "\n")
+                if socketio is not None:
+                    socketio.emit("parse_error", {
+                        "message": str(_parse_err),
+                        "raw_text": reply.raw_text,
+                    })
+                deltas = []
         else:
             deltas = []
 

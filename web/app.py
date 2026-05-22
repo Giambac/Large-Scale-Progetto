@@ -1103,13 +1103,42 @@ def _run_study_background(session_id: str) -> None:
                 continue
 
         # ── Parse and apply feedback ─────────────────────────────────────────
+        # Interpretation Agent: normalize human_text before parsing.
+        from src.interpretation_agent import interpret_feedback as _interpret_feedback
+        _interpreted_text = _interpret_feedback(human_text, current_state, _client)
+
         new_state = current_state
         try:
-            deltas = parse_feedback(human_text, current_state, _client)
+            deltas = parse_feedback(_interpreted_text, current_state, _client)
+            if deltas:
+                print(f"[StudyLoop] turn {turn_index} — {len(deltas)} delta(s):")
+                for _d in deltas:
+                    print(f"[StudyLoop]   {_d}")
+            else:
+                print(f"[StudyLoop] turn {turn_index} — no deltas")
             new_state = f_next_state(
                 current_state, deltas, store, namer, hierarchy, id_to_text, []
             )
         except (AssertionError, KeyError, ValueError) as exc:
+            import json as _json_mod, datetime as _dt_mod
+            _failed_path = os.path.join(session_dir, "failed_turns.jsonl")
+            with open(_failed_path, "a", encoding="utf-8") as _fh:
+                _fh.write(_json_mod.dumps({
+                    "event": "failed_turn",
+                    "timestamp": _dt_mod.datetime.utcnow().isoformat(),
+                    "turn_index": turn_index,
+                    "raw_text": human_text,
+                    "interpreted_text": _interpreted_text,
+                    "error": repr(exc),
+                }) + "\n")
+            _client_sid = sess.get("client_sid")
+            if _client_sid:
+                asyncio.run_coroutine_threadsafe(
+                    sio.emit("parse_error", {"message": str(exc), "raw_text": human_text}, to=_client_sid),
+                    _loop
+                )
+            else:
+                emitter.emit("parse_error", {"message": str(exc), "raw_text": human_text})
             emitter.emit("study_state", _build_study_state_payload(current_state))
             emitter.emit("study_awaiting_feedback", {})
             setStatus_msg = f"[error applying feedback — try rephrasing] {type(exc).__name__}: {exc}"
@@ -1497,6 +1526,7 @@ async def study_feedback(sid, data):
     session_id = data["session_id"]
     assert session_id in _study_sessions, f"Unknown study session: {session_id!r}"
 
+    _study_sessions[session_id]["client_sid"] = sid  # store so emitter can target this client
     _study_sessions[session_id]["feedback_queue"].append(data["text"])
     _study_sessions[session_id]["feedback_event"].set()
 

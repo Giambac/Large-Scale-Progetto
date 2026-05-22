@@ -66,12 +66,27 @@ class InstructionalFeedback:
     instruction_text: str
 
 
+@dataclass(frozen=True)
+class RenameFeedback:
+    """Oracle requests renaming cluster_id to new_name."""
+    cluster_id: int
+    new_name: str
+
+
+@dataclass(frozen=True)
+class DeleteFeedback:
+    """Oracle requests dissolving cluster_id: items redistributed to closest neighbours."""
+    cluster_id: int
+
+
 # Union alias — ordering matches type-priority dispatch in f_next_state (D-07):
-# global → cluster-level (split/merge) → point-level (move_item) → instructional
+# global → cluster-level (split/merge/rename/delete) → point-level (move_item) → instructional
 FeedbackDelta = Union[
     GlobalFeedback,
     SplitFeedback,
     MergeFeedback,
+    RenameFeedback,
+    DeleteFeedback,
     MoveItemFeedback,
     InstructionalFeedback,
 ]

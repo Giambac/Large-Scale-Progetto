@@ -81,6 +81,9 @@ socket.on('disconnect', function () {
 socket.on('state_update', function (data) {
     // data = { turn_index, clusters, soft_probs, cognitive_load, pairwise_accuracy, convergence_signal, contradiction_count }
     // soft_probs: { str(item_id): { str(cluster_id): float } }
+    console.log('[state_update] turn=' + data.turn_index +
+        ' | clusters=' + data.clusters.length +
+        ' | ' + data.clusters.map(function(c){ return 'C' + c.id + ':' + c.name + '(' + c.item_ids.length + ')'; }).join(', '));
     document.getElementById('turn-index').textContent = 'Turn: ' + data.turn_index;
     document.getElementById('cognitive-load').textContent =
         'Cognitive Load: ' + (data.cognitive_load || 0).toFixed(3);
@@ -88,6 +91,16 @@ socket.on('state_update', function (data) {
     appendHistoryEntry(data.turn_index);
     // D-28: Judge Agent metrics
     updateJudgeMetrics(data);
+});
+
+socket.on('parse_error', function (data) {
+    console.warn('[parse_error] ' + data.message + ' | raw_text: ' + data.raw_text);
+    const banner = document.getElementById('status-banner');
+    if (banner) {
+        banner.textContent = 'Parse error: ' + data.message;
+        banner.style.color = '#e53e3e';
+    }
+    appendHistoryEntry('⚠️ parse error — ' + data.raw_text);
 });
 
 socket.on('session_stopped', function (data) {
@@ -226,8 +239,14 @@ function renderTopItems(cluster, softProbs) {
 // ── History entry ─────────────────────────────────────────────────
 function appendHistoryEntry(turnIndex) {
     const list = document.getElementById('history-list');
+    if (!list) return;
     const li = document.createElement('li');
-    li.textContent = 'Turn ' + turnIndex + ' — state updated';
+    if (typeof turnIndex === 'string') {
+        li.textContent = turnIndex;
+        li.style.color = '#e53e3e';
+    } else {
+        li.textContent = 'Turn ' + turnIndex + ' — state updated';
+    }
     list.appendChild(li);
     list.scrollTop = list.scrollHeight;
 }
