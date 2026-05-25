@@ -210,6 +210,7 @@ _backend_name: str = _args.backend
 
 # ── Human study session constants (EXP-V2-01, D-13) ─────────────────────────
 STUDY_MAX_TURNS: int = int(os.environ.get("STUDY_MAX_TURNS", "15"))
+WATCH_MAX_TURNS: int = int(os.environ.get("WATCH_MAX_TURNS", "15"))
 _study_sessions: dict = {}  # session_id -> study session state dict
 
 # ── Module-level session state (single session per server run, D-15) ─────────
@@ -397,6 +398,14 @@ async def upload_dataset(file: UploadFile = File(...), backend: str = Form("hdbs
     if len(records) < 2:
         raise HTTPException(status_code=400, detail=f"Dataset too small: {len(records)} records (need >= 2)")
 
+    # Save uploaded file to disk so /watch/sessions can reference it by path
+    os.makedirs("uploads", exist_ok=True)
+    safe_name = os.path.basename(file.filename or "dataset.jsonl")
+    upload_path = os.path.join("uploads", safe_name)
+    with open(upload_path, "wb") as _uf:
+        _uf.write(raw)
+    _session["last_upload_path"] = upload_path
+
     with _session_lock:
         _session["state"] = None
         _session["task"] = None
@@ -408,7 +417,7 @@ async def upload_dataset(file: UploadFile = File(...), backend: str = Form("hdbs
         t.start()
         _session["task"] = t
 
-    return JSONResponse({"status": "session_started", "records": len(records)}, status_code=200)
+    return JSONResponse({"status": "session_started", "records": len(records), "dataset_path": upload_path}, status_code=200)
 
 
 # ── Background task ───────────────────────────────────────────────────────────
@@ -1026,8 +1035,7 @@ def _run_study_background(session_id: str) -> None:
                     ],
                 }
                 for c in st.clusters
-            ],
-            "turn_index": st.turn_index,
+            ]
         }
 
     emitter.emit("study_state", _build_study_state_payload(state))
@@ -1095,11 +1103,49 @@ def _run_study_background(session_id: str) -> None:
                 continue
 
         # ── Parse and apply feedback ─────────────────────────────────────────
-        deltas = parse_feedback(human_text, current_state, _client)
+        # Interpretation Agent: normalize human_text before parsing.
+        from src.interpretation_agent import interpret_feedback as _interpret_feedback
+        _interpreted_text = _interpret_feedback(human_text, current_state, _client)
 
-        new_state = f_next_state(
-            current_state, deltas, store, namer, hierarchy, id_to_text, []
-        )
+        new_state = current_state
+        try:
+            deltas = parse_feedback(_interpreted_text, current_state, _client)
+            if deltas:
+                print(f"[StudyLoop] turn {turn_index} — {len(deltas)} delta(s):")
+                for _d in deltas:
+                    print(f"[StudyLoop]   {_d}")
+            else:
+                print(f"[StudyLoop] turn {turn_index} — no deltas")
+            new_state = f_next_state(
+                current_state, deltas, store, namer, hierarchy, id_to_text, []
+            )
+        except (AssertionError, KeyError, ValueError) as exc:
+            import json as _json_mod, datetime as _dt_mod
+            _failed_path = os.path.join(session_dir, "failed_turns.jsonl")
+            with open(_failed_path, "a", encoding="utf-8") as _fh:
+                _fh.write(_json_mod.dumps({
+                    "event": "failed_turn",
+                    "timestamp": _dt_mod.datetime.utcnow().isoformat(),
+                    "turn_index": turn_index,
+                    "raw_text": human_text,
+                    "interpreted_text": _interpreted_text,
+                    "error": repr(exc),
+                }) + "\n")
+            _client_sid = sess.get("client_sid")
+            if _client_sid:
+                asyncio.run_coroutine_threadsafe(
+                    sio.emit("parse_error", {"message": str(exc), "raw_text": human_text}, to=_client_sid),
+                    _loop
+                )
+            else:
+                emitter.emit("parse_error", {"message": str(exc), "raw_text": human_text})
+            emitter.emit("study_state", _build_study_state_payload(current_state))
+            emitter.emit("study_awaiting_feedback", {})
+            setStatus_msg = f"[error applying feedback — try rephrasing] {type(exc).__name__}: {exc}"
+            log.warning("[study] feedback error: %s", exc)
+            turn_index += 1
+            sess["turn_index"] = turn_index
+            continue
 
         # Write state.json and audit log
         _write_session_state(new_state, session_dir)
@@ -1125,6 +1171,23 @@ def _run_study_background(session_id: str) -> None:
 
         # Emit updated study_state
         emitter.emit("study_state", _build_study_state_payload(current_state))
+
+        # Re-emit projection with updated per_cluster after every turn
+        sorted_cluster_ids = sorted({c.id for c in current_state.clusters})
+        updated_cluster_colors = {
+            str(cid): _CLUSTER_COLORS[idx % len(_CLUSTER_COLORS)]
+            for idx, cid in enumerate(sorted_cluster_ids)
+        }
+        updated_per_cluster = {
+            str(c.id): {"item_ids": c.item_ids, "name": c.name, "description": c.description}
+            for c in current_state.clusters
+        }
+        emitter.emit("study_projection", {
+            "coords": coords.tolist(),
+            "cluster_colors": updated_cluster_colors,
+            "global_bounds": {"x_min": x_min, "x_max": x_max, "y_min": y_min, "y_max": y_max},
+            "per_cluster": updated_per_cluster,
+        })
 
     # Turn budget exhausted
     _end_study_session(session_id, "turn_budget")
@@ -1239,6 +1302,13 @@ def _run_watch_background(session_id: str) -> None:
     sess["watch_chat"] = []   # populated below for replay-on-load
     emitter.emit("study_projection", _projection_payload)
 
+    # Generate and save human-readable session name
+    cluster_names = [c.name for c in state.clusters]
+    watch_session_name = _generate_session_name(namer, cluster_names)
+    if watch_session_name:
+        with open(os.path.join(session_dir, "name.txt"), "w", encoding="utf-8") as _f:
+            _f.write(watch_session_name)
+
     def _build_study_state_payload(st):
         return {
             "clusters": [
@@ -1252,8 +1322,7 @@ def _run_watch_background(session_id: str) -> None:
                     ],
                 }
                 for c in st.clusters
-            ],
-            "turn_index": st.turn_index,
+            ]
         }
 
     _state_payload = _build_study_state_payload(state)
@@ -1281,7 +1350,7 @@ def _run_watch_background(session_id: str) -> None:
     turn_index = 0
     current_state = state
 
-    while turn_index < STUDY_MAX_TURNS:
+    while turn_index < WATCH_MAX_TURNS:
         if sess["ended"]:
             return
 
@@ -1364,6 +1433,25 @@ def _run_watch_background(session_id: str) -> None:
         sess["watch_state"] = _state_payload
         emitter.emit("study_state", _state_payload)
 
+        # Re-emit projection with updated per_cluster after every turn
+        sorted_cluster_ids = sorted({c.id for c in current_state.clusters})
+        updated_cluster_colors = {
+            str(cid): _CLUSTER_COLORS[idx % len(_CLUSTER_COLORS)]
+            for idx, cid in enumerate(sorted_cluster_ids)
+        }
+        updated_per_cluster = {
+            str(c.id): {"item_ids": c.item_ids, "name": c.name, "description": c.description}
+            for c in current_state.clusters
+        }
+        updated_projection = {
+            "coords": coords.tolist(),
+            "cluster_colors": updated_cluster_colors,
+            "global_bounds": {"x_min": x_min, "x_max": x_max, "y_min": y_min, "y_max": y_max},
+            "per_cluster": updated_per_cluster,
+        }
+        sess["watch_projection"] = updated_projection
+        emitter.emit("study_projection", updated_projection)
+
         if reply.satisfied:
             _end_study_session(session_id, "oracle_satisfied")
             return
@@ -1392,7 +1480,7 @@ def _detect_satisfaction(human_text: str, client: tuple) -> bool:
         f"Does this message indicate the user is satisfied with the clustering? "
         f"Reply YES or NO only. Message: {human_text}"
     )
-    answer = chat(client, system=None, user=prompt, max_tokens=4)
+    answer = chat(client, system=None, user=prompt, max_tokens=16)
     return answer.strip().upper() == "YES"
 
 
@@ -1438,6 +1526,7 @@ async def study_feedback(sid, data):
     session_id = data["session_id"]
     assert session_id in _study_sessions, f"Unknown study session: {session_id!r}"
 
+    _study_sessions[session_id]["client_sid"] = sid  # store so emitter can target this client
     _study_sessions[session_id]["feedback_queue"].append(data["text"])
     _study_sessions[session_id]["feedback_event"].set()
 

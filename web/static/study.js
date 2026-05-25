@@ -132,9 +132,23 @@
     // ── Study-mode handlers (skipped in watch mode) ──────────────────────────
     if (!IS_WATCH) {
         // study_awaiting_feedback: enable input
+        var _lastParseError = null;
         socket.on('study_awaiting_feedback', function () {
             enableFeedback();
+            // Don't overwrite a parse_error message that just arrived (within 2s)
+            if (_lastParseError && (Date.now() - _lastParseError) < 2000) return;
             setStatus('Please type your feedback and click Send.');
+        });
+
+        // parse_error: show error in status bar and re-enable input
+        socket.on('parse_error', function (data) {
+            _lastParseError = Date.now();
+            var el = document.getElementById('study-status');
+            if (el) {
+                el.textContent = '⚠️ ' + friendlyParseError(data.message, data.raw_text);
+                el.style.color = '#e53e3e';
+            }
+            enableFeedback();
         });
 
         // study_satisfaction_detected: show confirmation banner
@@ -209,12 +223,36 @@
         socket.emit('study_feedback', { session_id: sessionId, text: text });
         textarea.value = '';
         disableFeedback();
+        var el = document.getElementById('study-status');
+        if (el) el.style.color = '';
         setStatus('Feedback sent. Waiting for response...');
     }
 
     function hideSatisfactionBanner() {
         var b = document.getElementById('satisfaction-banner');
         if (b) b.classList.remove('visible');
+    }
+
+    // Translate a raw parser error message into a human-readable string.
+    function friendlyParseError(message, rawText) {
+        // cluster ID not found
+        var clusterMatch = message.match(/cluster_(?:a_|b_)?id=(\d+) not in current clusters \{([^}]*)\}/);
+        if (clusterMatch) {
+            return 'Cluster ' + clusterMatch[1] + ' does not exist. ' +
+                   'Available clusters: ' + clusterMatch[2] + '. Try rephrasing.';
+        }
+        // move_item: target cluster not found (same pattern, caught above)
+        // item_id not found (less common — parser does not validate item IDs today)
+        var itemMatch = message.match(/item_id=(\d+)/);
+        if (itemMatch) {
+            return 'Item ' + itemMatch[1] + ' does not exist in the dataset. Try a different item.';
+        }
+        // unknown feedback type
+        if (message.includes('unknown feedback type')) {
+            return 'Could not understand: "' + rawText + '". Try using words like split, merge, or move.';
+        }
+        // fallback: strip internal prefix, keep the useful part
+        return message.replace(/^parse_feedback: /, '') + ' — try rephrasing.';
     }
 
     function enableFeedback() {

@@ -22,6 +22,7 @@ from src.state import Cluster, ClusteringState
 from src.feedback import (
     FeedbackDelta, SplitFeedback, MergeFeedback,
     MoveItemFeedback, GlobalFeedback, InstructionalFeedback,
+    RenameFeedback, DeleteFeedback,
     ORACLE_MOVE_CONFIDENCE, UNIFORM_FALLBACK_THRESHOLD,
 )
 from src.uncertainty import UncertaintyReport
@@ -495,6 +496,7 @@ def f_next_state(
 
     # Sort deltas by type priority (D-07): global first, then cluster, then point, then instructional
     PRIORITY = {GlobalFeedback: 0, SplitFeedback: 1, MergeFeedback: 1,
+                RenameFeedback: 1, DeleteFeedback: 1,
                 MoveItemFeedback: 2, InstructionalFeedback: 3}
     sorted_deltas = sorted(deltas, key=lambda d: PRIORITY[type(d)])
 
@@ -507,8 +509,53 @@ def f_next_state(
         # raise under STRICT_MODE) rather than letting _apply_* assert and kill the caller.
         live_ids = {c.id for c in current_state.clusters}
         if isinstance(delta, GlobalFeedback):
-            # FB-01: accumulate instruction in caller-owned list (schema frozen — not stored in state)
             global_instructions.append(delta.instruction_text)
+        elif isinstance(delta, RenameFeedback):
+            _new_clusters = []
+            for _c in current_state.clusters:
+                if _c.id == delta.cluster_id:
+                    _new_clusters.append(Cluster(id=_c.id, name=delta.new_name, description=_c.description, item_ids=_c.item_ids))
+                else:
+                    _new_clusters.append(_c)
+            current_state = ClusteringState(
+                turn_index=current_state.turn_index,
+                timestamp=current_state.timestamp,
+                clusters=_new_clusters,
+                assignments=current_state.assignments,
+                soft_probs=current_state.soft_probs,
+            )
+        elif isinstance(delta, DeleteFeedback):
+            _id_to_idx = _cluster_id_to_index(current_state)
+            if delta.cluster_id in _id_to_idx:
+                _kept = [c for c in current_state.clusters if c.id != delta.cluster_id]
+                _kept_ids = [c.id for c in _kept]
+                _new_k = len(_kept_ids)
+                _new_assignments = dict(current_state.assignments)
+                _cluster_extra: dict[int, list[int]] = {cid: [] for cid in _kept_ids}
+                _target = current_state.clusters[_id_to_idx[delta.cluster_id]]
+                for _item_id in _target.item_ids:
+                    _old_probs = current_state.soft_probs[_item_id]
+                    _best_cid = max(_kept_ids, key=lambda cid: _old_probs[_id_to_idx[cid]])
+                    _new_assignments[_item_id] = _best_cid
+                    _cluster_extra[_best_cid].append(_item_id)
+                _new_soft_probs = {}
+                for _item_id, _old_probs in current_state.soft_probs.items():
+                    _new_probs = [_old_probs[_id_to_idx[cid]] for cid in _kept_ids]
+                    _p = np.array(_new_probs, dtype=np.float64)
+                    _s = _p.sum()
+                    _p = _p / _s if _s > 0 else np.ones(_new_k, dtype=np.float64) / _new_k
+                    _new_soft_probs[_item_id] = _p.tolist()
+                _new_clusters = []
+                for _c in _kept:
+                    _new_item_ids = list(_c.item_ids) + _cluster_extra[_c.id]
+                    _new_clusters.append(Cluster(id=_c.id, name=_c.name, description=_c.description, item_ids=_new_item_ids))
+                current_state = ClusteringState(
+                    turn_index=current_state.turn_index,
+                    timestamp=current_state.timestamp,
+                    clusters=_new_clusters,
+                    assignments=_new_assignments,
+                    soft_probs=_new_soft_probs,
+                )
         elif isinstance(delta, SplitFeedback):
             if delta.cluster_id not in live_ids:
                 deviation("f_next_state: SplitFeedback references unknown cluster — skipping",
@@ -534,7 +581,6 @@ def f_next_state(
                 continue
             current_state = _apply_move_item(delta, current_state, namer, id_to_text, global_instructions)
         elif isinstance(delta, InstructionalFeedback):
-            # FB-04: accumulate instruction in caller-owned list (Phase 3 — same pattern as GlobalFeedback)
             global_instructions.append(delta.instruction_text)
         else:
             assert False, f"Unknown FeedbackDelta type: {type(delta)}"
